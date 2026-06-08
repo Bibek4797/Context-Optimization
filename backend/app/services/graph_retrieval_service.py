@@ -38,6 +38,7 @@ class GraphRetrievalService:
         import shutil
         import urllib.request
         import tarfile
+        import ssl
 
         # Check if system node is >= 22.5.0 (node:sqlite support)
         try:
@@ -63,16 +64,18 @@ class GraphRetrievalService:
         if node_bin.exists():
             return str(node_bin)
 
-        # Download tarball
+        # Download tarball (using .tar.gz for universal gzip extraction support)
         node_dir.parent.mkdir(parents=True, exist_ok=True)
-        tar_path = self.storage.data_dir / "bin" / "node.tar.xz"
-        url = "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz"
+        tar_path = self.storage.data_dir / "bin" / "node.tar.gz"
+        url = "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.gz"
 
         try:
-            with urllib.request.urlopen(url, timeout=30) as response, tar_path.open("wb") as out_file:
+            # Bypass SSL certificate check (commonly required on Streamlit containers with outdated certs)
+            ssl_context = ssl._create_unverified_context()
+            with urllib.request.urlopen(url, context=ssl_context, timeout=60) as response, tar_path.open("wb") as out_file:
                 shutil.copyfileobj(response, out_file)
             
-            with tarfile.open(tar_path, "r:xz") as tar:
+            with tarfile.open(tar_path, "r:gz") as tar:
                 tar.extractall(path=node_dir.parent)
 
             extracted_folder = node_dir.parent / "node-v22.11.0-linux-x64"
@@ -88,13 +91,17 @@ class GraphRetrievalService:
                 tar_path.unlink()
 
             return str(node_bin)
-        except Exception:
+        except Exception as exc:
             if tar_path.exists():
                 try:
                     tar_path.unlink()
                 except Exception:
                     pass
-            return "node"
+            # Propagate the error so the user gets notified exactly why the Node.js 22 download failed
+            raise RuntimeError(
+                f"Internal engine fails: Failed to auto-install Node.js 22 dependency on Streamlit Cloud. "
+                f"Download URL: {url}. Error detail: {exc}."
+            )
 
     def _compute_pagerank(self, nodes: list[GraphNode], edges: list[GraphEdge], damping: float = 0.85, max_iter: int = 20) -> dict[str, float]:
         n = len(nodes)
