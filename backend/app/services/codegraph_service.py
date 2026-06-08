@@ -37,6 +37,7 @@ CALL_NODE_TYPES = {"call", "call_expression", "method_invocation"}
 
 
 class CodeGraphService:
+
     def build(self, repo_id: str, repo_root: Path, files: list[RepoFile]) -> GraphDocument:
         nodes: dict[str, GraphNode] = {}
         edges: dict[str, GraphEdge] = {}
@@ -64,7 +65,7 @@ class CodeGraphService:
                 file_path=rel_path,
                 line_start=1,
                 line_end=max(1, repo_file.line_count),
-                source_snippet=text[:800],
+                source_snippet=None,
                 metadata={"path": rel_path},
             )
             nodes[module_id] = module_node
@@ -342,7 +343,7 @@ class CodeGraphService:
             file_path=rel_path,
             line_start=line_start,
             line_end=line_end,
-            source_snippet=segment,
+            source_snippet=None,
             metadata={"qualified_name": qualname, "tree_sitter_type": node.type},
         )
 

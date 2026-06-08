@@ -180,6 +180,8 @@ class QueryRecord(BaseModel):
     selected_edges: list[GraphEdge] = Field(default_factory=list)
     token_usage: dict[str, TokenMeasurement] = Field(default_factory=dict)
     latency_ms: int = 0
+    retrieval_strategy: str = "unknown"
+    context: str = ""
     created_at: datetime = Field(default_factory=utc_now)
 
 

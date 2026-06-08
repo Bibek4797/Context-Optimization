@@ -51,10 +51,12 @@ class RepoService:
             ["git", "clone", "--depth", "1", clone_url, str(source_dir)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=180,
         )
         if result.returncode != 0:
-            raise ValueError(f"Git clone failed: {result.stderr.strip() or result.stdout.strip()}")
+            raise ValueError(f"Git clone failed: {(result.stderr or '').strip() or (result.stdout or '').strip()}")
         return self.analysis_pipeline.analyze_existing(name=name, source_dir=source_dir, origin=clone_url, repo_id=repo_id)
 

@@ -120,6 +120,8 @@ export interface QueryRecord {
   selected_edges: GraphEdge[];
   token_usage: Record<string, TokenMeasurement>;
   latency_ms: number;
+  retrieval_strategy?: string;
+  context?: string;
   created_at: string;
 }
 

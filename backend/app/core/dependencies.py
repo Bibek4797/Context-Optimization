@@ -8,7 +8,6 @@ from app.services.graph_retrieval_service import GraphRetrievalService
 from app.services.graphify_service import GraphifyService
 from app.services.llm.gemini import GeminiProvider
 from app.services.repo_service import RepoService
-from app.services.retrieval_service import RetrievalService
 from app.services.storage import LocalStorage
 from app.services.token_service import TokenService
 from app.services.tree_sitter_service import TreeSitterService
@@ -35,11 +34,9 @@ repo_service = RepoService(
     max_upload_mb=settings.max_upload_mb,
 )
 llm_provider = GeminiProvider(api_key=settings.gemini_api_key, model=settings.gemini_model)
-retrieval_service = RetrievalService(storage=storage, token_service=token_service)
 graph_retrieval_service = GraphRetrievalService(storage=storage, token_service=token_service)
 chat_service = ChatService(
     storage=storage,
-    retrieval_service=retrieval_service,
     graph_retrieval_service=graph_retrieval_service,
     token_service=token_service,
     llm_provider=llm_provider,

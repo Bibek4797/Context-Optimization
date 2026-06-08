@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 from app.models.schemas import GraphDocument, GraphEdge, GraphNode
@@ -8,6 +9,7 @@ from app.models.schemas import GraphDocument, GraphEdge, GraphNode
 class GraphifyService:
     def __init__(self, storage: Any) -> None:
         self.storage = storage
+
 
     def run_or_fallback(self, repo_id: str, repo_root: Path, codegraph: GraphDocument) -> GraphDocument:
         # Build Native Graphify directly from CodeGraph in Python.
@@ -64,7 +66,7 @@ class GraphifyService:
                     file_path=node.file_path,
                     line_start=node.line_start,
                     line_end=node.line_end,
-                    source_snippet=node.source_snippet,
+                    source_snippet=None,
                     metadata={**node.metadata, "graphify_processed": True, "native": True},
                 )
             )

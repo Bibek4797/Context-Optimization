@@ -26,7 +26,6 @@ from app.services.graph_retrieval_service import GraphRetrievalService  # noqa: 
 from app.services.graphify_service import GraphifyService  # noqa: E402
 from app.services.llm.gemini import GeminiProvider  # noqa: E402
 from app.services.repo_service import RepoService  # noqa: E402
-from app.services.retrieval_service import RetrievalService  # noqa: E402
 from app.services.storage import LocalStorage  # noqa: E402
 from app.services.token_service import TokenService  # noqa: E402
 from app.services.tree_sitter_service import TreeSitterService  # noqa: E402
@@ -54,8 +53,43 @@ def get_secret(name: str, default: str | None = None) -> str | None:
         return default
 
 
+def ensure_node_dependencies() -> None:
+    """Ensure that the Node.js package @colbymchenry/codegraph is installed."""
+    import subprocess
+    import shutil
+    
+    if not shutil.which("node"):
+        return
+        
+    try:
+        # Check if require('@colbymchenry/codegraph') works
+        proc = subprocess.run(
+            ["node", "-e", "require('@colbymchenry/codegraph')"],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT)
+        )
+        if proc.returncode == 0:
+            return
+    except Exception:
+        return
+
+    # If not installed, run npm install
+    if shutil.which("npm"):
+        try:
+            subprocess.run(
+                ["npm", "install", "--no-save", "@colbymchenry/codegraph"],
+                cwd=str(PROJECT_ROOT),
+                capture_output=True,
+                timeout=60
+            )
+        except Exception:
+            pass
+
+
 @st.cache_resource
 def services():
+    ensure_node_dependencies()
     data_dir_value = get_secret("CONTEXT_ENGINE_DATA_DIR") or os.getenv("CONTEXT_ENGINE_DATA_DIR")
     data_dir = Path(data_dir_value) if data_dir_value else PROJECT_ROOT / "data"
     if not data_dir.is_absolute():
@@ -80,7 +114,6 @@ def services():
     )
     chat_service = ChatService(
         storage=storage,
-        retrieval_service=RetrievalService(storage=storage, token_service=token_service),
         graph_retrieval_service=GraphRetrievalService(storage=storage, token_service=token_service),
         token_service=token_service,
         llm_provider=llm_provider,
@@ -118,6 +151,23 @@ def ingest_uploaded_zip(uploaded_file) -> RepoMetadata:
     return pipeline.analyze_existing(name=repo_name, source_dir=source_dir, origin="upload", repo_id=repo_id)
 
 
+def ingest_uploaded_files(uploaded_files) -> RepoMetadata:
+    """Ingest one or more individual code files (not zipped)."""
+    repo_id = uuid4().hex
+    # Name the repo after the first file or "uploaded_files"
+    if len(uploaded_files) == 1:
+        repo_name = clean_repo_name(Path(uploaded_files[0].name).stem)
+    else:
+        repo_name = f"uploaded_{len(uploaded_files)}_files"
+    source_dir = storage.repo_source_dir(repo_id)
+    source_dir.mkdir(parents=True, exist_ok=True)
+    for f in uploaded_files:
+        dest = source_dir / f.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(f.getbuffer())
+    return pipeline.analyze_existing(name=repo_name, source_dir=source_dir, origin="file_upload", repo_id=repo_id)
+
+
 def metric_row(repo: RepoMetadata) -> None:
     cols = st.columns(4)
     cols[0].metric("Total files", repo.stats.total_files)
@@ -134,6 +184,21 @@ def render_status(repo: RepoMetadata | None) -> None:
     st.sidebar.write(f"Model: **{model_info.model}**")
     st.sidebar.write(f"Gemini key: **{'configured' if model_info.configured else 'missing'}**")
     
+    st.sidebar.subheader("Retrieval Engine")
+    retrieval_method_label = st.sidebar.selectbox(
+        "Algorithm",
+        ["Internal Graph Retrieval (Default)", "Advanced Hybrid Scoring System"],
+        index=0,
+        help=(
+            "**Internal Graph Retrieval** — Uses the native engines of CodeGraph / Graphify (external CLI tools when available, "
+            "built-in Python query engine as fallback) to directly identify relevant nodes and edges for context.\n\n"
+            "**Advanced Hybrid Scoring** — Layers BM25 TF-IDF, PageRank centrality, edge-weighted neighbor propagation, "
+            "and traceback line number matching on top of the graph."
+        ),
+    )
+    is_advanced = "Advanced" in retrieval_method_label
+    st.session_state.retrieval_method = "advanced" if is_advanced else "internal"
+
     st.sidebar.subheader("Context Size Budget")
     budget_label = st.sidebar.selectbox(
         "Retrieval Scale Selector",
@@ -151,11 +216,31 @@ def render_status(repo: RepoMetadata | None) -> None:
     else: # Balanced
         st.session_state.graph_max_nodes = 14
         anchors, neighbors = 4, 8
-        
-    st.sidebar.caption(
-        f"**Active Limits:** Anchors (Full): `{anchors}` | Neighbors (Signature): `{neighbors}`"
-    )
 
+    st.sidebar.subheader("Graphify Traversal Mode")
+    traversal_label = st.sidebar.radio(
+        "Search Strategy",
+        ["Broad Architecture (BFS)", "Deep Execution Path (DFS)"],
+        index=0,
+        help=(
+            "**BFS (Breadth-First)** — Explores the call graph broadly, gathering context from many interconnected functions and modules. "
+            "Best for understanding overall architecture and cross-module dependencies.\n\n"
+            "**DFS (Depth-First)** — Follows a single execution path deeply through the call chain. "
+            "Best for tracing specific control flows, debugging, and understanding deep call hierarchies."
+        ),
+    )
+    st.session_state.graphify_mode = "dfs" if "DFS" in traversal_label else "bfs"
+
+    if is_advanced:
+        st.sidebar.caption(
+            f"**Active Limits:** Anchors (Full): `{anchors}` | Neighbors (Signature): `{neighbors}`"
+        )
+    else:
+        gf_budget = st.session_state.graph_max_nodes * 250
+        st.sidebar.caption(
+            f"**Active Limits:** Max Nodes: `{st.session_state.graph_max_nodes}` | "
+            f"Graphify Budget: `{gf_budget}` chars | Mode: `{st.session_state.graphify_mode.upper()}`"
+        )
     
     st.sidebar.subheader("Codebase Rectifier")
     st.session_state.rectify_enabled = st.sidebar.checkbox(
@@ -192,14 +277,43 @@ def render_logs(repo: RepoMetadata | None) -> None:
 
 def render_upload_import() -> None:
     st.header("Upload Or Import")
+
+    SUPPORTED_EXTENSIONS = [
+        "py", "pyi", "js", "jsx", "ts", "tsx",
+        "go", "rs", "java", "c", "cpp", "cc", "cxx", "h", "hpp",
+    ]
+
+    # ── Section 1: Upload individual code files ──
+    st.subheader("📄 Upload Code Files")
+    st.caption("Upload one or more individual source files directly — no zipping needed.")
+    uploaded_files = st.file_uploader(
+        "Choose source files",
+        type=SUPPORTED_EXTENSIONS,
+        accept_multiple_files=True,
+        key="file_uploader",
+    )
+    if st.button("Analyze files", disabled=not uploaded_files, type="primary"):
+        with st.spinner("Analyzing uploaded files..."):
+            try:
+                repo = ingest_uploaded_files(uploaded_files)
+                set_repo(repo)
+                st.success(f"Loaded {repo.name} ({len(uploaded_files)} file{'s' if len(uploaded_files) != 1 else ''})")
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
+
+    st.markdown("---")
+
+    # ── Section 2: Upload repo (zip or GitHub) ──
+    st.subheader("📦 Upload Repository")
     left, right = st.columns(2)
     with left:
-        st.subheader("Upload zipped codebase")
-        uploaded_file = st.file_uploader("Choose .zip file", type=["zip"])
-        if st.button("Analyze upload", disabled=uploaded_file is None, type="primary"):
+        st.markdown("**Upload zipped codebase**")
+        uploaded_zip = st.file_uploader("Choose .zip file", type=["zip"], key="zip_uploader")
+        if st.button("Analyze zip", disabled=uploaded_zip is None, type="primary"):
             with st.spinner("Extracting and analyzing repository..."):
                 try:
-                    repo = ingest_uploaded_zip(uploaded_file)
+                    repo = ingest_uploaded_zip(uploaded_zip)
                     set_repo(repo)
                     st.success(f"Loaded {repo.name}")
                     st.rerun()
@@ -207,7 +321,7 @@ def render_upload_import() -> None:
                     st.error(str(exc))
 
     with right:
-        st.subheader("Import GitHub URL")
+        st.markdown("**Import GitHub URL**")
         github_url = st.text_input("Repository URL", placeholder="https://github.com/owner/repo")
         if st.button("Clone and analyze", disabled=not github_url.strip()):
             with st.spinner("Cloning and analyzing repository..."):
@@ -381,14 +495,35 @@ def render_tree_sitter(repo: RepoMetadata | None) -> None:
 def graph_to_dot(graph: GraphDocument, max_nodes: int = 80, max_edges: int = 160) -> str:
     visible_nodes = graph.nodes[:max_nodes]
     visible = {node.node_id for node in visible_nodes}
-    lines = ["digraph G {", "rankdir=LR;", 'node [shape=box, style="rounded,filled", fillcolor="#f7f8f6", color="#bfc8c2"];']
+    lines = [
+        "digraph G {", 
+        "rankdir=LR;", 
+        "bgcolor=transparent;",
+        'node [shape=box, style="rounded,filled", fontname="Courier New", fontsize=9];'
+    ]
     for node in visible_nodes:
-        label = f"{node.node_type}\\n{node.label}".replace('"', "'")
-        lines.append(f'"{node.node_id}" [label="{label}"];')
+        ntype = (node.node_type or "").lower()
+        label = f"[{ntype.upper()}]\\n{node.label}".replace('"', "'")
+        node_id_escaped = node.node_id.replace('"', "'")
+        
+        # Harmonious color palette per node type
+        if ntype in {"module", "file"}:
+            fill, border = "#e7f5ff", "#228be6" # Blue
+        elif ntype in {"class", "struct_item", "component"}:
+            fill, border = "#ebfbee", "#40c057" # Green
+        elif ntype in {"function", "method", "concept"}:
+            fill, border = "#fff9db", "#fab005" # Yellow/Amber
+        else:
+            fill, border = "#f8f9fa", "#dee2e6" # Slate/Light Gray
+            
+        lines.append(f'"{node_id_escaped}" [label="{label}", fillcolor="{fill}", color="{border}", penwidth=1.5];')
+        
     for edge in graph.edges:
         if edge.source_node in visible and edge.target_node in visible:
             label = edge.edge_type.replace('"', "'")
-            lines.append(f'"{edge.source_node}" -> "{edge.target_node}" [label="{label}"];')
+            lines.append(
+                f'"{edge.source_node}" -> "{edge.target_node}" [label="{label}", color="#495057", fontcolor="#495057", fontsize=8];'
+            )
             max_edges -= 1
             if max_edges <= 0:
                 break
@@ -413,7 +548,7 @@ def render_graph_schematic(kind: str) -> None:
                 | :--- | :--- | :--- | :--- |
                 | **`module`** | A file in the codebase (e.g. `.py`, `.ts`). | `file_path`, `total_lines`, `docstring_headers`, `imports` | Serves as the high-level anchor for structural organization. |
                 | **`class`** | An OOP class definition. | `label` (class name), base classes, `line_start`, `line_end` | Defines data structures and component boundaries. |
-                | **`function`** / **`method`** | Independent utility functions or class-bound methods. | `signature`, parameters, return type, docstrings, `source_snippet` | Holds the exact business logic and code execution body. |
+                | **`function`** / **`method`** | Independent utility functions or class-bound methods. | `signature`, parameters, return type, docstrings | Defines modular logic boundaries (code loaded on-demand from disk). |
                 """
             )
             st.info(
@@ -470,7 +605,7 @@ def render_graph_schematic(kind: str) -> None:
   "file_path": "backend/app/services/token_service.py",
   "line_start": 15,
   "line_end": 23,
-  "source_snippet": "def estimate_tokens(self, text: str) -> int:...",
+  "source_snippet": null,
   "metadata": {
     "docstring_headers": ["Estimate tokens using tiktoken."],
     "parameters": ["self", "text"],
@@ -544,13 +679,6 @@ def render_tokens(repo: RepoMetadata | None) -> None:
     if not repo:
         st.info("Load a repository first.")
         return
-        
-    st.markdown(
-        "### 🧠 LLM Prompt Token Analysis\n"
-        "LLMs have strict **context window limits** and charge based on the number of input tokens. "
-        "This dashboard tracks how **Graph-Optimized QA** successfully reduces the number of **LLM Prompt (input) tokens** "
-        "compared to a **General Chatbot Baseline (Whole Codebase)** (sending 100% of all codebase lines/files directly to the LLM plus the query)."
-    )
 
     # 1. Load all queries run so far
     import json
@@ -569,38 +697,48 @@ def render_tokens(repo: RepoMetadata | None) -> None:
     queries = sorted(queries, key=lambda q: q.created_at)
 
     if queries:
-        st.subheader("📊 Query-by-Query LLM Prompt Savings")
+        st.subheader("📊 Query Token Usage & Savings History")
         
-        # Build comparison rows against General Chatbot Baseline (Whole Codebase) for each graph_optimized query
-        comparison_rows = []
+        # Build one unified table showing everything
+        table_rows = []
         for q_rec in queries:
             if q_rec.mode != "graph_optimized":
                 continue
             q_text = q_rec.query.strip()
-            prompt_tokens_measurement = q_rec.token_usage.get("llm_prompt_tokens")
-            prompt_tokens = prompt_tokens_measurement.tokens if prompt_tokens_measurement else 0
+            prompt_meas = q_rec.token_usage.get("llm_prompt_tokens")
+            prompt_tokens = prompt_meas.tokens if prompt_meas else 0
             
-            baseline_measurement = q_rec.token_usage.get("whole_codebase_baseline")
-            baseline_tokens = baseline_measurement.tokens if baseline_measurement else 0
+            baseline_meas = q_rec.token_usage.get("whole_codebase_baseline")
+            baseline_tokens = baseline_meas.tokens if baseline_meas else 0
             
-            if baseline_tokens > 0:
-                saved = baseline_tokens - prompt_tokens
-                pct = (saved / baseline_tokens * 100) if baseline_tokens else 0
-                comparison_rows.append({
-                    "Query / Question": q_text,
-                    "General Chatbot Baseline (Whole Codebase)": baseline_tokens,
-                    "Graph-Optimized Prompt Tokens": prompt_tokens,
-                    "Tokens Saved": saved,
-                    "Savings %": f"{round(pct, 2)}%"
-                })
-                
-        if comparison_rows:
-            st.dataframe(comparison_rows, use_container_width=True, hide_index=True)
+            resp_meas = q_rec.token_usage.get("llm_response_tokens")
+            resp_tokens = resp_meas.tokens if resp_meas else 0
+            
+            total_meas = q_rec.token_usage.get("total_per_query_tokens")
+            total_tokens = total_meas.tokens if total_meas else (prompt_tokens + resp_tokens)
+            
+            saved = max(0, baseline_tokens - prompt_tokens) if baseline_tokens > 0 else 0
+            pct = (saved / baseline_tokens * 100) if baseline_tokens > 0 else 0.0
+            
+            table_rows.append({
+                "Time": q_rec.created_at.strftime("%H:%M:%S") if q_rec.created_at else "N/A",
+                "Query / Question": q_text,
+                "Whole Codebase Baseline": baseline_tokens,
+                "Graph-Optimized Input": prompt_tokens,
+                "LLM Response Output": resp_tokens,
+                "Total Query Tokens": total_tokens,
+                "Tokens Saved": saved,
+                "Savings %": f"{round(pct, 2)}%",
+                "Latency": f"{q_rec.latency_ms} ms"
+            })
+            
+        if table_rows:
+            st.dataframe(table_rows, use_container_width=True, hide_index=True)
             
             # Show aggregate savings
-            total_baseline = sum(row["General Chatbot Baseline (Whole Codebase)"] for row in comparison_rows)
-            total_graph = sum(row["Graph-Optimized Prompt Tokens"] for row in comparison_rows)
-            total_saved = total_baseline - total_graph
+            total_baseline = sum(q_rec.token_usage.get("whole_codebase_baseline").tokens for q_rec in queries if q_rec.mode == "graph_optimized" and q_rec.token_usage.get("whole_codebase_baseline"))
+            total_graph = sum(q_rec.token_usage.get("llm_prompt_tokens").tokens for q_rec in queries if q_rec.mode == "graph_optimized" and q_rec.token_usage.get("llm_prompt_tokens"))
+            total_saved = max(0, total_baseline - total_graph)
             avg_pct = (total_saved / total_baseline * 100) if total_baseline else 0
             
             st.markdown("#### 📈 Cumulative Savings Against Whole Codebase Baseline")
@@ -611,24 +749,6 @@ def render_tokens(repo: RepoMetadata | None) -> None:
             c4.metric("Avg. Token Savings %", f"{round(avg_pct, 2)}%")
         else:
             st.info("Ask a question in **Graph QA** to see direct query-by-query token savings here!")
-            
-        st.subheader("📜 All Query History & Token Usage")
-        history_rows = []
-        for q_rec in queries:
-            prompt_meas = q_rec.token_usage.get("llm_prompt_tokens")
-            resp_meas = q_rec.token_usage.get("llm_response_tokens")
-            total_meas = q_rec.token_usage.get("total_per_query_tokens")
-            
-            history_rows.append({
-                "Time": q_rec.created_at.strftime("%H:%M:%S") if q_rec.created_at else "N/A",
-                "Mode": "Graph-Optimized" if q_rec.mode == "graph_optimized" else "Standard",
-                "Question": q_rec.query,
-                "LLM Prompt (Input)": prompt_meas.tokens if prompt_meas else 0,
-                "LLM Response (Output)": resp_meas.tokens if resp_meas else 0,
-                "Total Query Tokens": total_meas.tokens if total_meas else 0,
-                "Latency": f"{q_rec.latency_ms} ms"
-            })
-        st.dataframe(history_rows, use_container_width=True, hide_index=True)
     else:
         st.info("No queries have been run in this session yet. Go to Graph QA to ask a question!")
 
@@ -729,6 +849,8 @@ def parse_and_render_code_fix(answer_text: str, repo_id: str) -> None:
 def subgraph_to_dot(record: QueryRecord) -> str:
     nodes = record.selected_nodes
     edges = record.selected_edges
+    strategy = getattr(record, "retrieval_strategy", "unknown")
+    is_advanced = "Advanced" in strategy
     
     lines = [
         "digraph G {", 
@@ -745,19 +867,25 @@ def subgraph_to_dot(record: QueryRecord) -> str:
             
     # Render nodes with distinct color highlights
     for node in nodes:
-        is_anchor = (node.file_path, node.line_start) in anchor_keys
         node_id_escaped = node.node_id.replace('"', "'")
         label = f"[{node.node_type.upper()}]\\n{node.label}".replace('"', "'")
         
-        if is_anchor:
-            # Gold premium outline for Primary Anchors (full bodies)
-            lines.append(
-                f'"{node_id_escaped}" [label="{label}", fillcolor="#fff3bf", color="#f08c00", penwidth=2.5];'
-            )
+        if is_advanced:
+            is_anchor = (node.file_path, node.line_start) in anchor_keys
+            if is_anchor:
+                # Gold premium outline for Primary Anchors (full bodies)
+                lines.append(
+                    f'"{node_id_escaped}" [label="{label}", fillcolor="#fff3bf", color="#f08c00", penwidth=2.5];'
+                )
+            else:
+                # Sleek slate gray outline for Neighbor Nodes (signatures)
+                lines.append(
+                    f'"{node_id_escaped}" [label="{label}", fillcolor="#f1f3f5", color="#adb5bd", penwidth=1.2];'
+                )
         else:
-            # Sleek slate gray outline for Neighbor Nodes (signatures)
+            # Premium light blue outline for flat retrieved nodes in Internal mode
             lines.append(
-                f'"{node_id_escaped}" [label="{label}", fillcolor="#f1f3f5", color="#adb5bd", penwidth=1.2];'
+                f'"{node_id_escaped}" [label="{label}", fillcolor="#e7f5ff", color="#228be6", penwidth=2.0];'
             )
             
     # Render edges
@@ -776,7 +904,11 @@ def subgraph_to_dot(record: QueryRecord) -> str:
 def render_query_record(record: QueryRecord) -> None:
     if record.error:
         st.error(record.error)
-    st.caption(f"{record.status} | {record.latency_ms} ms | query_id={record.query_id}")
+    strategy = getattr(record, "retrieval_strategy", "unknown")
+    if strategy != "unknown":
+        st.caption(f"{record.status.upper()} | {record.latency_ms} ms | Strategy: `{strategy}` | query_id={record.query_id}")
+    else:
+        st.caption(f"{record.status.upper()} | {record.latency_ms} ms | query_id={record.query_id}")
     parse_and_render_code_fix(record.answer, record.repo_id)
 
     
@@ -805,7 +937,7 @@ def render_query_record(record: QueryRecord) -> None:
         cols[1].metric(
             "Optimized Graph", 
             f"{optimized_count:,} tokens",
-            help="Actual prompt tokens sent using your PageRank Hybrid Retrieval graph optimization."
+            help="Actual prompt tokens sent using your graph-optimized retrieval."
         )
         cols[2].metric(
             "Net Input Saved", 
@@ -829,50 +961,25 @@ def render_query_record(record: QueryRecord) -> None:
             * **Net Input Tokens Saved:** `{saved_tokens:,}` tokens (**{saved_percent}% prompt size reduction**!)
             * **LLM Response Output size:** `{response_count:,}` tokens
             
-            This means your PageRank Hybrid Retrieval algorithm saved **{saved_tokens:,} input tokens** on this single query!
+            This means your graph-optimized retrieval algorithm saved **{saved_tokens:,} input tokens** on this single query!
             """
         )
         st.dataframe([value.model_dump() for value in record.token_usage.values()], use_container_width=True, hide_index=True)
 
     if record.selected_nodes:
         counts = graph_node_source_counts(record)
-        cols = st.columns(3)
+        cols = st.columns(2)
         cols[0].metric("CodeGraph nodes", counts["codegraph"])
         cols[1].metric("Native Graphify nodes", counts["graphify"])
-        cols[2].metric("Fallback Graphify nodes", counts["graphify_fallback"])
         
-        # Build raw text blocks passed to the prompt
-        node_lines = [
-            f"- {node.node_id} [{node.node_type}] {node.label} ({node.file_path or 'external'}:{node.line_start or '-'})"
-            for node in record.selected_nodes
-        ]
-        edge_lines = [
-            f"- {edge.source_node} --{edge.edge_type}--> {edge.target_node}"
-            for edge in record.selected_edges
-        ]
-        snippet_lines = [
-            f"### {snippet.file_path}:{snippet.line_start}-{snippet.line_end} ({snippet.source})\n{snippet.text}"
-            for snippet in record.source_snippets
-        ]
-        exact_context = "\n".join(
-            [
-                "Graph-selected nodes:",
-                *node_lines,
-                "",
-                "Graph relationships:",
-                *edge_lines,
-                "",
-                "Source snippets:",
-                *snippet_lines,
-            ]
-        )
+        exact_context = getattr(record, "context", "") or ""
         
         with st.expander("📄 View Exact Context Passed to LLM", expanded=False):
             t1, t2 = st.tabs(["📝 Context Text Block Only", "🚀 Complete Raw LLM Prompt Ingested"])
             with t1:
                 st.markdown(
                     "This is the exact, optimized context text block that was appended to the LLM prompt "
-                    "using your PageRank Hybrid Retrieval algorithm:"
+                    "using the selected graph retrieval engine:"
                 )
                 st.text_area("LLM Prompt Context Text", exact_context, height=350)
             with t2:
@@ -909,7 +1016,11 @@ def render_query_record(record: QueryRecord) -> None:
 
         # Graphical Subgraph Neighborhood representation
         st.markdown("#### 🗺️ Context Neighborhood Map")
-        st.caption("Selected structural neighborhood map for this query. Primary Anchors (Full context) are highlighted in **yellow/orange**, and Neighbor Nodes (Signature context) are in **gray**.")
+        strategy = getattr(record, "retrieval_strategy", "unknown")
+        if "Advanced" in strategy:
+            st.caption("Selected structural neighborhood map for this query. Primary Anchors (Full context) are highlighted in **yellow/orange**, and Neighbor Nodes (Signature context) are in **gray**.")
+        else:
+            st.caption("Selected structural nodes and relationships retrieved by the native query engine, highlighted in **blue**.")
         dot = subgraph_to_dot(record)
         st.graphviz_chart(dot, use_container_width=True)
 
@@ -925,26 +1036,16 @@ def render_query_record(record: QueryRecord) -> None:
 
 
 def graph_node_source_counts(record: QueryRecord) -> dict[str, int]:
-    counts = {"codegraph": 0, "graphify": 0, "graphify_fallback": 0}
+    counts = {"codegraph": 0, "graphify": 0}
     for node in record.selected_nodes:
         is_graphify = (
             node.node_id.startswith("graphify:") or 
-            (node.metadata and (
-                node.metadata.get("merged_from_graphify") is True or
-                node.metadata.get("graphify_processed") is True
-            ))
-        )
-        is_fallback = (
-            node.node_id.startswith("graphify-fallback:") or 
-            (node.metadata and node.metadata.get("fallback") is True)
+            (node.metadata and node.metadata.get("graphify_processed") is True)
         )
         
-        if is_fallback:
-            counts["graphify_fallback"] += 1
-        elif is_graphify:
+        if is_graphify and not node.node_id.startswith("codegraph:"):
             counts["graphify"] += 1
-            
-        if node.node_id.startswith("codegraph:") or is_graphify:
+        elif node.node_id.startswith("codegraph:"):
             counts["codegraph"] += 1
     return counts
 
@@ -953,24 +1054,7 @@ def qa_prompt_help() -> str:
     return "Ask about architecture, important functions, call paths, classes, imports, or implementation behavior."
 
 
-def render_standard_qa(repo: RepoMetadata | None) -> None:
-    st.header("Standard Repo QA")
-    if not repo:
-        st.info("Load a repository first.")
-        return
-    query = st.text_area("Question", placeholder=qa_prompt_help(), key="standard_query")
-    if st.button("Ask Standard QA", disabled=not query.strip(), type="primary"):
-        with st.spinner("Building chunk context and calling Gemini..."):
-            record = chat_service.standard_qa(
-                repo.repo_id,
-                query.strip(),
-                st.session_state.session_id,
-                limit=st.session_state.get("standard_limit", 8),
-                rectify=st.session_state.get("rectify_enabled", False)
-            )
-            st.session_state.standard_record = record
-    if "standard_record" in st.session_state:
-        render_query_record(st.session_state.standard_record)
+
 
 
 def render_graph_qa(repo: RepoMetadata | None) -> None:
@@ -988,14 +1072,12 @@ def render_graph_qa(repo: RepoMetadata | None) -> None:
     # Expose graph source selection dropdown
     source_label = st.selectbox(
         "Retrieve Graph Context from:",
-        ["Merged CodeGraph + Graphify", "CodeGraph (Static Structure) Only", "Graphify (Flow Analysis) Only"],
+        ["CodeGraph (Static Structure) Only", "Graphify (Flow Analysis) Only"],
         index=0,
         key="graph_source_select"
     )
-    source_selection = "merged"
-    if "Static Structure" in source_label:
-        source_selection = "codegraph"
-    elif "Flow Analysis" in source_label:
+    source_selection = "codegraph"
+    if "Flow Analysis" in source_label:
         source_selection = "graphify"
 
     query = st.text_area("Question", placeholder=qa_prompt_help(), key="graph_query")
@@ -1007,7 +1089,9 @@ def render_graph_qa(repo: RepoMetadata | None) -> None:
                 st.session_state.session_id,
                 source_selection=source_selection,
                 max_nodes=st.session_state.get("graph_max_nodes", 8),
-                rectify=st.session_state.get("rectify_enabled", False)
+                rectify=st.session_state.get("rectify_enabled", False),
+                retrieval_method=st.session_state.get("retrieval_method", "internal"),
+                graphify_mode=st.session_state.get("graphify_mode", "bfs")
             )
             st.session_state.graph_record = record
 
@@ -1015,113 +1099,100 @@ def render_graph_qa(repo: RepoMetadata | None) -> None:
         render_query_record(st.session_state.graph_record)
 
 
-def render_compare(repo: RepoMetadata | None) -> None:
-    st.header("Compare Baseline vs Graph-Optimized")
-    if not repo:
-        st.info("Load a repository first.")
-        return
+
+
+
+def inject_premium_styles() -> None:
     st.markdown(
-        "Run a comparison to see how much **LLM Prompt (input) tokens** are reduced using Graph-Optimized QA compared to Standard Retrieval QA. "
-        "Reducing prompt tokens directly helps you stay within LLM context window limits and saves cost."
-    )
-    
-    # Expose graph source selection dropdown for comparison
-    source_label = st.selectbox(
-        "Retrieve Graph Context from:",
-        ["Merged CodeGraph + Graphify", "CodeGraph (Static Structure) Only", "Graphify (Flow Analysis) Only"],
-        index=0,
-        key="compare_source_select"
-    )
-    source_selection = "merged"
-    if "Static Structure" in source_label:
-        source_selection = "codegraph"
-    elif "Flow Analysis" in source_label:
-        source_selection = "graphify"
-
-    query = st.text_area("Question", placeholder="Run the same query through both modes.", key="compare_query")
-    if st.button("Run comparison", disabled=not query.strip(), type="primary"):
-        with st.spinner("Running both QA modes..."):
-            st.session_state.compare_result = chat_service.compare(
-                repo.repo_id,
-                query.strip(),
-                st.session_state.session_id,
-                source_selection=source_selection,
-                limit=st.session_state.get("standard_limit", 8),
-                max_nodes=st.session_state.get("graph_max_nodes", 8)
-            )
-    result = st.session_state.get("compare_result")
-    if not result:
-        return
+        """
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         
-    st.subheader("LLM Prompt Token Reduction Analysis")
-    
-    # Read the values safely with fallback for older query records
-    is_new_format = "baseline_prompt_tokens" in result.token_savings
-    
-    baseline_val = result.token_savings.get("baseline_prompt_tokens") if is_new_format else result.token_savings.get("baseline_context_tokens", 0)
-    optimized_val = result.token_savings.get("optimized_prompt_tokens") if is_new_format else result.token_savings.get("optimized_context_tokens", 0)
-    saved_val = result.token_savings.get("saved_prompt_tokens") if is_new_format else result.token_savings.get("saved_context_tokens", 0)
-    saved_pct = result.token_savings.get("saved_percent", 0)
-    
-    cols = st.columns(4)
-    cols[0].metric("Baseline LLM Prompt", f"{baseline_val:,} tokens" if isinstance(baseline_val, int) else f"{baseline_val} tokens")
-    cols[1].metric("Optimized LLM Prompt", f"{optimized_val:,} tokens" if isinstance(optimized_val, int) else f"{optimized_val} tokens")
-    cols[2].metric("Saved Prompt Tokens", f"{saved_val:,} tokens" if isinstance(saved_val, int) else f"{saved_val} tokens")
-    cols[3].metric("Saved %", f"{saved_pct}%")
-    
-    if is_new_format:
-        st.caption(
-            f"**Context alone:** Standard context was {result.token_savings.get('baseline_context_tokens', 0):,} tokens vs "
-            f"Graph-optimized context of {result.token_savings.get('optimized_context_tokens', 0):,} tokens "
-            f"(Context tokens reduced by **{result.token_savings.get('saved_context_percent', 0)}%**)."
-        )
-    else:
-        st.caption("Showing estimated context tokens (fallback for older records).")
-        
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Standard QA (No Graph)")
-        render_query_record(result.standard)
-    with right:
-        st.subheader("Graph-Optimized QA")
-        render_query_record(result.graph_optimized)
-
-
-def render_architecture_note() -> None:
-    with st.expander("What this public demo is doing"):
-        st.markdown(
-            textwrap.dedent(
-                """
-                This Streamlit app reuses the same Stage 1 engine:
-
-                - Tree-sitter parses Python files with real source spans.
-                - CodeGraph is built from Python AST relationships.
-                - Graphify is attempted through a local CLI and falls back transparently when unavailable.
-                - Token counts are labeled exact or estimated.
-                - Gemini calls use secrets or environment variables, never hardcoded keys.
-
-                On Streamlit Community Cloud, local storage is ephemeral. That is fine for a mentor demo, but a production version
-                should move artifacts to durable storage.
-                """
-            )
-        )
+        <style>
+            /* Apply Inter font universally */
+            html, body, [class*="css"], .stApp {
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            }
+            
+            /* JetBrains Mono for Code Blocks */
+            code, pre, [data-testid="stMarkdownContainer"] code {
+                font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace !important;
+            }
+            
+            /* Professional Gradient Header */
+            .main-header {
+                font-size: 2.2rem;
+                font-weight: 700;
+                background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                margin-bottom: 0.5rem;
+                letter-spacing: -0.025em;
+            }
+            
+            /* Subtle layout and card borders */
+            div[data-testid="stMetric"] {
+                background-color: rgba(128, 128, 128, 0.03);
+                border: 1px solid rgba(128, 128, 128, 0.15);
+                border-radius: 8px;
+                padding: 15px 20px;
+                transition: all 0.2s ease-in-out;
+            }
+            
+            div[data-testid="stMetric"]:hover {
+                transform: translateY(-2px);
+                border-color: rgba(59, 130, 246, 0.4);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            }
+            
+            /* Sidebar Styling */
+            section[data-testid="stSidebar"] {
+                border-right: 1px solid rgba(128, 128, 128, 0.1);
+            }
+            
+            /* Professional Tab layout styling */
+            button[data-testid="stMarker"] {
+                font-weight: 600 !important;
+            }
+            
+            /* Smooth transitions for interactive elements */
+            .stButton>button {
+                border-radius: 6px !important;
+                font-weight: 500 !important;
+                transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            }
+            
+            .stButton>button:hover {
+                box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2) !important;
+                transform: translateY(-1px) !important;
+            }
+            
+            /* Premium Alert & Info Boxes */
+            div[data-testid="stNotification"] {
+                border-radius: 8px !important;
+                border: 1px solid rgba(128, 128, 128, 0.1) !important;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def main() -> None:
-    st.title("Context Optimization Engine")
-    st.caption("Stage 1 public demo: Python repo ingestion, Tree-sitter, CodeGraph, Graphify, token accounting, Gemini QA.")
+    inject_premium_styles()
+    st.markdown('<h1 class="main-header">Context Optimization Engine</h1>', unsafe_allow_html=True)
+    st.caption("Stage 1 public demo: Python repo ingestion, CodeGraph, Graphify, token accounting, Gemini QA.")
 
     if "session_id" not in st.session_state:
         st.session_state.session_id = uuid4().hex
 
     repo = current_repo()
     render_status(repo)
-    render_architecture_note()
 
     tab_names = [
         "Upload / Import",
         "Repo Analysis",
-        "Tree-sitter",
         "CodeGraph",
         "Graphify",
         "Graph QA",
@@ -1133,14 +1204,12 @@ def main() -> None:
     with tabs[1]:
         render_repo_analysis(repo)
     with tabs[2]:
-        render_tree_sitter(repo)
-    with tabs[3]:
         render_graph(repo, "codegraph")
-    with tabs[4]:
+    with tabs[3]:
         render_graph(repo, "graphify")
-    with tabs[5]:
+    with tabs[4]:
         render_graph_qa(repo)
-    with tabs[6]:
+    with tabs[5]:
         render_tokens(repo)
 
 

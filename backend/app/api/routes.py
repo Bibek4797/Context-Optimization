@@ -5,7 +5,6 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from app.core.dependencies import chat_service, repo_service, storage
 from app.models.schemas import (
     ChatRequest,
-    CompareRequest,
     GitHubImportRequest,
     QueryRecord,
     RepoFileList,
@@ -97,28 +96,10 @@ def repo_logs(repo_id: str, limit: int = Query(200, ge=1, le=1000)):
     if metadata is None:
         raise HTTPException(status_code=404, detail="Repo not found.")
     return {"repo_id": repo_id, "logs": storage.load_logs(repo_id, limit=limit)}
-
-
-@router.post("/chat/standard", response_model=QueryRecord)
-def standard_chat(request: ChatRequest) -> QueryRecord:
-    try:
-        return chat_service.standard_qa(request.repo_id, request.query, request.session_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
 @router.post("/chat/graph-optimized", response_model=QueryRecord)
 def graph_optimized_chat(request: ChatRequest) -> QueryRecord:
     try:
         return chat_service.graph_optimized_qa(request.repo_id, request.query, request.session_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.post("/chat/compare")
-def compare_chat(request: CompareRequest):
-    try:
-        return chat_service.compare(request.repo_id, request.query, request.session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

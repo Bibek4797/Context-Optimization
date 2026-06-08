@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import re
 import math
+import subprocess
+import json
+from pathlib import Path
 from dataclasses import dataclass
 
 from app.models.schemas import GraphEdge, GraphNode, SourceSnippet, TokenMeasurement
 from app.services.storage import LocalStorage
 from app.services.token_service import TokenService
+from app.services.graphify_service import GraphifyService
+from app.services.codegraph_service import CodeGraphService
 
 
 @dataclass
@@ -16,12 +21,15 @@ class GraphRetrievalResult:
     selected_nodes: list[GraphNode]
     selected_edges: list[GraphEdge]
     token_measurement: TokenMeasurement
+    retrieval_strategy: str = "unknown"
 
 
 class GraphRetrievalService:
     def __init__(self, storage: LocalStorage, token_service: TokenService) -> None:
         self.storage = storage
         self.token_service = token_service
+        self.graphify_service = GraphifyService(storage=storage)
+        self.codegraph_service = CodeGraphService()
 
     def _compute_pagerank(self, nodes: list[GraphNode], edges: list[GraphEdge], damping: float = 0.85, max_iter: int = 20) -> dict[str, float]:
         n = len(nodes)
@@ -60,11 +68,43 @@ class GraphRetrievalService:
             
         return pr
 
-    def _extract_node_signature(self, node: GraphNode) -> str:
+    def _read_node_code(self, repo_id: str, node: GraphNode, file_cache: dict[str, list[str]]) -> str:
+        if node.node_type == "cli_output" or not node.file_path:
+            return node.source_snippet or ""
+        
+        repo_root = self.storage.repo_source_dir(repo_id)
+        abs_path = str((repo_root / node.file_path).resolve())
+        
+        if abs_path not in file_cache:
+            try:
+                from app.services.file_utils import read_text_lossy
+                text = read_text_lossy(Path(abs_path))
+                file_cache[abs_path] = text.splitlines()
+            except Exception:
+                file_cache[abs_path] = []
+        
+        lines = file_cache[abs_path]
+        if not lines:
+            return node.source_snippet or ""
+        
+        # line_start and line_end are 1-based indices
+        start = (node.line_start or 1) - 1
+        end = (node.line_end or node.line_start or 1)
+        
+        # Ensure indices are within bounds
+        start = max(0, min(start, len(lines)))
+        end = max(0, min(end, len(lines)))
+        
+        if start >= end:
+            return ""
+            
+        return "\n".join(lines[start:end])
+
+    def _extract_node_signature(self, node: GraphNode, code: str) -> str:
         # Signature is lightweight: node name, type, and the first few lines of its code (if present)
         parts = [node.label or "", node.node_type or ""]
-        if node.source_snippet:
-            lines = node.source_snippet.splitlines()[:5]
+        if code:
+            lines = code.splitlines()[:5]
             parts.extend(lines)
         return "\n".join(parts)
 
@@ -107,51 +147,25 @@ class GraphRetrievalService:
             return prefix + "\n\n... [Snippet Truncated - Declarations & Headers Expanded] ...\n" + "\n".join(extra_lines)
         return prefix + "\n\n... [Snippet Truncated] ..."
 
-    def build_context(self, repo_id: str, query: str, max_nodes: int = 8, source_selection: str = "merged") -> GraphRetrievalResult:
+    def build_context(self, repo_id: str, query: str, max_nodes: int = 8, source_selection: str = "codegraph", retrieval_method: str = "internal", graphify_mode: str = "bfs") -> GraphRetrievalResult:
         codegraph = self.storage.load_codegraph(repo_id)
         graphify = self.storage.load_graphify(repo_id)
         if codegraph is None:
             raise ValueError("CodeGraph output not found for repo.")
 
-        # Source Selection and Dynamic Graph Merging
-        if source_selection == "codegraph" or not graphify:
-            all_nodes = codegraph.nodes
-            all_edges = codegraph.edges
-        elif source_selection == "graphify":
+        # ── Internal Graph Retrieval ──
+        # Uses the native query engines of CodeGraph / Graphify (CLI first, Python fallback)
+        if retrieval_method == "internal":
+            return self._internal_retrieval(repo_id, query, max_nodes, source_selection, codegraph, graphify, graphify_mode=graphify_mode)
+
+        # ── Advanced Hybrid Scoring (needs structural node/edge lists) ──
+        # Source Selection and Dynamic Graph Loading
+        if source_selection == "graphify" and graphify:
             all_nodes = graphify.nodes
             all_edges = graphify.edges
-        else: # "merged"
-            cg_module_map = {n.file_path: n.node_id for n in codegraph.nodes if n.node_type == "module" and n.file_path}
-            
-            merged_nodes = list(codegraph.nodes)
-            node_id_rewrites = {}
-            
-            for n in graphify.nodes:
-                file_path = n.file_path or n.metadata.get("file_path") or n.metadata.get("path")
-                if file_path and file_path in cg_module_map:
-                    target_id = cg_module_map[file_path]
-                    node_id_rewrites[n.node_id] = target_id
-                    for idx, node in enumerate(merged_nodes):
-                        if node.node_id == target_id:
-                            merged_nodes[idx] = node.model_copy(
-                                update={"metadata": {**node.metadata, **n.metadata, "merged_from_graphify": True}}
-                            )
-                            break
-                else:
-                    merged_nodes.append(n)
-                    
-            merged_edges = []
-            seen_edges = set()
-            for edge in (codegraph.edges + graphify.edges):
-                src = node_id_rewrites.get(edge.source_node, edge.source_node)
-                tgt = node_id_rewrites.get(edge.target_node, edge.target_node)
-                edge_key = (src, edge.edge_type, tgt)
-                if edge_key not in seen_edges:
-                    seen_edges.add(edge_key)
-                    merged_edges.append(edge.model_copy(update={"source_node": src, "target_node": tgt}))
-                
-            all_nodes = merged_nodes
-            all_edges = merged_edges
+        else: # "codegraph"
+            all_nodes = codegraph.nodes
+            all_edges = codegraph.edges
 
         # 1. Base limits mapping (Tight, Balanced, Deep selector)
         if max_nodes <= 8:
@@ -190,7 +204,7 @@ class GraphRetrievalService:
         for index, node in enumerate(sorted_by_pr[:H]):
             pr_boost[node.node_id] = 8.0 * (1.0 - (index / H))
 
-        # 3. Perform dynamic Light-to-Full checks on all nodes and score with BM25
+        # 3. Perform dynamic Light-to-Full checks on all nodes and score with Lightweight Keyword Matcher
         terms = self._terms(query)
         
         # Traceback Line Number Scorer: extract line numbers (e.g. 'line 25' or 'file.py:25' or 'L25')
@@ -203,67 +217,38 @@ class GraphRetrievalService:
                 except ValueError:
                     pass
 
-        # BM25 Precomputations: Average document length of all haystacks in the repo
-        doc_lengths = {}
-        doc_terms = {}
-        for node in all_nodes:
-            sig = self._extract_node_signature(node)
-            has_sig_match = any(term in sig.lower() for term in terms)
-            if has_sig_match and node.source_snippet:
-                haystack = (node.label or "") + " " + (node.node_type or "") + " " + (node.file_path or "") + " " + node.source_snippet + " " + " ".join(str(value) for value in node.metadata.values())
-            else:
-                haystack = (node.label or "") + " " + (node.node_type or "") + " " + (node.file_path or "") + " " + sig + " " + " ".join(str(value) for value in node.metadata.values())
-            
-            haystack_lower = haystack.lower()
-            doc_lengths[node.node_id] = len(haystack_lower)
-            doc_terms[node.node_id] = haystack_lower
-            
-        avg_dl = sum(doc_lengths.values()) / max(1, len(doc_lengths))
-        
-        # Precompute document frequency (DF) for each query term across all haystacks
-        df = {term: 0 for term in terms}
-        for haystack_lower in doc_terms.values():
-            for term in terms:
-                if term in haystack_lower:
-                    df[term] += 1
+        # Per-query file reading cache
+        file_cache: dict[str, list[str]] = {}
+        node_codes: dict[str, str] = {}
 
         node_scores = {}
-        k1 = 1.2
-        b = 0.75
-        
         for node in all_nodes:
-            haystack_lower = doc_terms[node.node_id]
-            dl = doc_lengths[node.node_id]
-            
-            # Calculate BM25 Lexical Score
-            bm25_score = 0.0
+            code = self._read_node_code(repo_id, node, file_cache)
+            node_codes[node.node_id] = code
+
+            # Lightweight Keyword Matcher:
+            keyword_score = 0.0
             for term in terms:
-                df_t = df[term]
-                # Inverse Document Frequency (IDF)
-                idf = math.log((N - df_t + 0.5) / (df_t + 0.5) + 1.0) if df_t > 0 else 0.0
-                # Term Frequency (TF)
-                tf = haystack_lower.count(term)
-                # BM25 term calculation
-                term_score = idf * (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * (dl / avg_dl)))
-                bm25_score += term_score
-                
-            score = bm25_score
-            
-            # Direct exact label keyword matches (name match)
-            for term in terms:
-                if term in node.label.lower():
-                    score += 8.0
+                # Add +10.0 if a term is found in node.label.lower()
+                if node.label and term in node.label.lower():
+                    keyword_score += 10.0
+                # Add +5.0 if a term is found in node.file_path.lower()
+                if node.file_path and term in node.file_path.lower():
+                    keyword_score += 5.0
+
+            # Add +0.2 if node.node_type is in {"function", "class", "method"}
+            structural_boost = 0.0
             if node.node_type in {"function", "class", "method"}:
-                score += 0.2
-                
+                structural_boost = 0.2
+
             # Line boundary matching: massive boost if a mentioned traceback line falls within this node's range
             line_boost = 0.0
             if node.file_path and node.line_start is not None and node.line_end is not None:
                 for line_num in line_numbers:
                     if node.line_start <= line_num <= node.line_end:
                         line_boost += 15.0
-                
-            node_scores[node.node_id] = score + pr_boost.get(node.node_id, 0.0) + line_boost
+
+            node_scores[node.node_id] = keyword_score + structural_boost + line_boost + pr_boost.get(node.node_id, 0.0)
 
         # 4. Select top K Primary Anchors based on final scores
         sorted_nodes = sorted(all_nodes, key=lambda n: node_scores.get(n.node_id, 0.0), reverse=True)
@@ -320,34 +305,42 @@ class GraphRetrievalService:
         
         # Anchors (Full context)
         for node in selected_anchors.values():
-            if not node.file_path or not node.source_snippet:
+            code = node_codes.get(node.node_id)
+            if code is None:
+                code = self._read_node_code(repo_id, node, file_cache)
+            if not node.file_path and node.node_type != "cli_output":
                 continue
-            key = (node.file_path, node.line_start, node.line_end)
+            path = node.file_path or node.node_id
+            key = (path, node.line_start, node.line_end)
             if key not in seen_snippets:
                 seen_snippets.add(key)
                 snippets.append(
                     SourceSnippet(
-                        file_path=node.file_path,
+                        file_path=path,
                         line_start=node.line_start or 1,
                         line_end=node.line_end or node.line_start or 1,
-                        text=node.source_snippet,
+                        text=code,
                         source="graph_anchor",
                     )
                 )
                 
         # Neighbors (Smart truncated signature context)
         for node in selected_neighbors.values():
-            if not node.file_path or not node.source_snippet:
+            code = node_codes.get(node.node_id)
+            if code is None:
+                code = self._read_node_code(repo_id, node, file_cache)
+            if not node.file_path and node.node_type != "cli_output":
                 continue
-            key = (node.file_path, node.line_start, node.line_end)
+            path = node.file_path or node.node_id
+            key = (path, node.line_start, node.line_end)
             if key not in seen_snippets:
                 seen_snippets.add(key)
                 
                 # Format snippet with dynamic budget limit + signature append
-                truncated_text = self._format_neighbor_snippet(node.source_snippet, limit_chars)
+                truncated_text = self._format_neighbor_snippet(code, limit_chars)
                 snippets.append(
                     SourceSnippet(
-                        file_path=node.file_path,
+                        file_path=path,
                         line_start=node.line_start or 1,
                         line_end=node.line_end or node.line_start or 1,
                         text=truncated_text,
@@ -355,7 +348,7 @@ class GraphRetrievalService:
                     )
                 )
 
-        context = self._format_context(selected_nodes, selected_edges, snippets)
+        context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="advanced")
         measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
         
         return GraphRetrievalResult(
@@ -364,28 +357,249 @@ class GraphRetrievalService:
             selected_nodes=selected_nodes,
             selected_edges=selected_edges,
             token_measurement=measurement,
+            retrieval_strategy="Advanced Hybrid Scoring System",
         )
+    def _internal_retrieval(
+        self, repo_id: str, query: str, max_nodes: int,
+        source_selection: str, codegraph, graphify,
+        graphify_mode: str = "bfs",
+    ) -> GraphRetrievalResult:
+        """Route to the native query engine of CodeGraph / Graphify based on source_selection.
+
+        Only uses the external CLI tools (graphify CLI or CodeGraph Node.js).
+        If the CLI fails, the exception is propagated so the user can see exactly why it failed.
+        """
+        selected_nodes: list[GraphNode] = []
+        selected_edges: list[GraphEdge] = []
+
+        if source_selection == "graphify":
+            if not graphify or not graphify.nodes:
+                raise ValueError("Graphify output is not available for this repository.")
+            selected_nodes, selected_edges, _ = self._query_graphify(repo_id, graphify, query, max_nodes, graphify_mode=graphify_mode)
+            gf_budget = max_nodes * 250
+            mode_label = graphify_mode.upper()
+            strategy = f"Internal Graph Retrieval (Graphify CLI | {mode_label} | Budget: {gf_budget})"
+
+        else:  # "codegraph"
+            selected_nodes, selected_edges, _ = self._query_codegraph(repo_id, codegraph, query, max_nodes)
+            strategy = "Internal Graph Retrieval (CodeGraph CLI)"
+
+        snippets = self._snippets(repo_id, selected_nodes)
+        context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="internal")
+        measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
+
+        return GraphRetrievalResult(
+            context=context,
+            snippets=snippets,
+            selected_nodes=selected_nodes,
+            selected_edges=selected_edges,
+            token_measurement=measurement,
+            retrieval_strategy=strategy,
+        )
+
+    def _query_graphify(self, repo_id: str, graphify, query: str, max_nodes: int, graphify_mode: str = "bfs") -> tuple[list[GraphNode], list[GraphEdge], bool]:
+        """Try external Graphify CLI. Raise an error if it is missing or fails."""
+        repo_root = self.storage.repo_source_dir(repo_id)
+        target_budget = max_nodes * 250
+
+        # Ensure standard graph.json exists under repo_root/graphify-out/graph.json in NetworkX node-link format
+        out_dir = repo_root / "graphify-out"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        graph_json_path = out_dir / "graph.json"
+
+        formatted_nodes = []
+        for node in graphify.nodes:
+            formatted_nodes.append({
+                "id": node.node_id,
+                "label": node.label,
+                "type": node.node_type,
+                "file_path": node.file_path,
+                "line_start": node.line_start,
+                "line_end": node.line_end,
+                "source_snippet": node.source_snippet,
+                "metadata": node.metadata
+            })
+        formatted_links = []
+        for edge in graphify.edges:
+            formatted_links.append({
+                "source": edge.source_node,
+                "target": edge.target_node,
+                "type": edge.edge_type,
+                "score": edge.score,
+                "metadata": edge.metadata
+            })
+
+        graph_json_path.write_text(
+            json.dumps({"nodes": formatted_nodes, "links": formatted_links}, indent=2),
+            encoding="utf-8"
+        )
+
+        try:
+            proc = subprocess.run(
+                ["graphify", "query", query, "--mode", graphify_mode, "--budget", str(target_budget)],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Internal engine fails: Graphify CLI execution failed because the tool could not be found or executed. "
+                f"Error detail: {e}. Please ensure the 'graphify' CLI is installed and in your PATH."
+            )
+
+        if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip() or (proc.stdout or "").strip()
+            raise RuntimeError(
+                f"Internal engine fails: Graphify CLI query command failed (Exit Code {proc.returncode}). "
+                f"Output/Error: {stderr}"
+            )
+            
+        cli_output = (proc.stdout or "").strip()
+        if not cli_output:
+            raise RuntimeError(
+                "Internal engine fails: Graphify CLI query succeeded but returned empty output context."
+            )
+            
+        cli_node = GraphNode(
+            node_id="graphify:cli_result",
+            node_type="cli_output",
+            label="Graphify CLI Query Result",
+            source_snippet=cli_output,
+            metadata={"source": "graphify_cli", "query": query},
+        )
+        return [cli_node], [], True
+
+    def _query_codegraph(self, repo_id: str, codegraph, query: str, max_nodes: int) -> tuple[list[GraphNode], list[GraphEdge], bool]:
+        """Try external CodeGraph Node.js CLI. Raise an error if it is missing or fails."""
+        repo_root = self.storage.repo_source_dir(repo_id)
+
+        # Ensure node_modules dependencies are installed (specifically for Streamlit Cloud startup/deployment)
+        node_modules_dir = Path.cwd() / "node_modules" / "@colbymchenry" / "codegraph"
+        if not node_modules_dir.exists():
+            try:
+                subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(Path.cwd()),
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=60,
+                    check=True
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Internal engine fails: CodeGraph Node dependencies (npm install) could not be installed. "
+                    f"Error detail: {e}. Please ensure Node.js and npm are installed and available."
+                )
+
+        script = (
+            "(async () => {\n"
+            "  try {\n"
+            "    const { CodeGraph } = require('@colbymchenry/codegraph');\n"
+            "    const projectRoot = process.cwd();\n"
+            "    let cg;\n"
+            "    if (CodeGraph.isInitialized(projectRoot)) {\n"
+            "      cg = await CodeGraph.open(projectRoot);\n"
+            "    } else {\n"
+            "      cg = await CodeGraph.init(projectRoot);\n"
+            "    }\n"
+            "    if (cg.indexAll) await cg.indexAll();\n"
+            "    const query = process.argv[2] || '';\n"
+            f"    const ctx = await cg.buildContext(query, {{ maxNodes: {max_nodes}, includeCode: true, format: 'markdown' }});\n"
+            "    console.log(JSON.stringify({ context: ctx }));\n"
+            "    if (cg.close) await cg.close();\n"
+            "  } catch (e) {\n"
+            "    console.error(e && e.stack ? e.stack : e);\n"
+            "    process.exit(2);\n"
+            "  }\n"
+            "})();\n"
+        )
+        script_path = repo_root / ".codegraph_query.js"
+        script_path.write_text(script, encoding="utf-8")
+        
+        try:
+            proc = subprocess.run(
+                ["node", str(script_path), query],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+        except Exception as e:
+            try:
+                script_path.unlink()
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"Internal engine fails: CodeGraph CLI execution failed because Node.js could not be found or executed. "
+                f"Error detail: {e}. Please ensure 'node' (Node.js) is installed and in your PATH."
+            )
+
+        try:
+            script_path.unlink()
+        except Exception:
+            pass
+
+        if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip() or (proc.stdout or "").strip()
+            raise RuntimeError(
+                f"Internal engine fails: CodeGraph CLI Node.js process failed (Exit Code {proc.returncode}). "
+                f"Error: {stderr}"
+            )
+
+        stdout = (proc.stdout or "").strip()
+        if not stdout:
+            raise RuntimeError(
+                "Internal engine fails: CodeGraph CLI query succeeded but returned empty output context."
+            )
+
+        try:
+            parsed = json.loads(stdout)
+            cli_context = parsed.get("context") or stdout
+        except json.JSONDecodeError:
+            cli_context = stdout
+
+        cli_node = GraphNode(
+            node_id="codegraph:cli_result",
+            node_type="cli_output",
+            label="CodeGraph CLI Query Result",
+            source_snippet=cli_context,
+            metadata={"source": "codegraph_cli", "query": query},
+        )
+        return [cli_node], [], True
+
+
+    # ── Utility methods ────────────────────────────────────────────────────
 
     def _terms(self, query: str) -> list[str]:
         return [term.lower() for term in re.findall(r"[A-Za-z_][A-Za-z0-9_]{1,}", query)]
 
-    def _snippets(self, nodes: list[GraphNode]) -> list[SourceSnippet]:
-        # Keeps compatibility with old calls if any, though build_context now generates snippets directly
+    def _snippets(self, repo_id: str, nodes: list[GraphNode]) -> list[SourceSnippet]:
+        """Extract source snippets from selected nodes (works for both CLI output and Python query nodes)."""
         snippets: list[SourceSnippet] = []
         seen: set[tuple[str, int | None, int | None]] = set()
+        file_cache: dict[str, list[str]] = {}
         for node in nodes:
-            if not node.file_path or not node.source_snippet:
+            code = self._read_node_code(repo_id, node, file_cache)
+            if not code:
                 continue
-            key = (node.file_path, node.line_start, node.line_end)
+            # Use file_path if available, otherwise use node_id as identifier
+            path = node.file_path or node.node_id
+            key = (path, node.line_start, node.line_end)
             if key in seen:
                 continue
             seen.add(key)
             snippets.append(
                 SourceSnippet(
-                    file_path=node.file_path,
-                    line_start=node.line_start or 1,
-                    line_end=node.line_end or node.line_start or 1,
-                    text=node.source_snippet,
+                    file_path=path,
+                    line_start=node.line_start or 0,
+                    line_end=node.line_end or node.line_start or 0,
+                    text=code,
                     source="graph",
                 )
             )
@@ -396,7 +610,13 @@ class GraphRetrievalService:
         nodes: list[GraphNode],
         edges: list[GraphEdge],
         snippets: list[SourceSnippet],
+        retrieval_method: str = "advanced",
     ) -> str:
+        if retrieval_method == "internal":
+            mode_header = "### Retrieval Mode: Internal CLI Engine (CodeGraph/Graphify)"
+        else:
+            mode_header = "### Retrieval Mode: Advanced Hybrid Engine (Lightweight Keyword + PageRank)"
+
         node_lines = [
             f"- {node.node_id} [{node.node_type}] {node.label} ({node.file_path or 'external'}:{node.line_start or '-'})"
             for node in nodes
@@ -411,6 +631,8 @@ class GraphRetrievalService:
         ]
         return "\n".join(
             [
+                mode_header,
+                "",
                 "Graph-selected nodes:",
                 *node_lines,
                 "",
