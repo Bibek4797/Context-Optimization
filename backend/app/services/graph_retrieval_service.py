@@ -31,6 +31,71 @@ class GraphRetrievalService:
         self.graphify_service = GraphifyService(storage=storage)
         self.codegraph_service = CodeGraphService()
 
+    def _ensure_node_22(self) -> str:
+        """Ensure Node.js 22+ is available on Linux/Streamlit. Returns node path or 'node'."""
+        import sys
+        import os
+        import shutil
+        import urllib.request
+        import tarfile
+
+        # Check if system node is >= 22.5.0 (node:sqlite support)
+        try:
+            proc = subprocess.run(["node", "-v"], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                v_str = proc.stdout.strip().lstrip("v")
+                parts = v_str.split(".")
+                if parts:
+                    major = int(parts[0])
+                    minor = int(parts[1]) if len(parts) > 1 else 0
+                    if major > 22 or (major == 22 and minor >= 5):
+                        return "node"
+        except Exception:
+            pass
+
+        # We only download the precompiled binary on Linux (Streamlit Cloud runs on Linux x64)
+        if sys.platform != "linux":
+            return "node"
+
+        node_dir = self.storage.data_dir / "bin" / "node-v22.11.0"
+        node_bin = node_dir / "bin" / "node"
+
+        if node_bin.exists():
+            return str(node_bin)
+
+        # Download tarball
+        node_dir.parent.mkdir(parents=True, exist_ok=True)
+        tar_path = self.storage.data_dir / "bin" / "node.tar.xz"
+        url = "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz"
+
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response, tar_path.open("wb") as out_file:
+                shutil.copyfileobj(response, out_file)
+            
+            with tarfile.open(tar_path, "r:xz") as tar:
+                tar.extractall(path=node_dir.parent)
+
+            extracted_folder = node_dir.parent / "node-v22.11.0-linux-x64"
+            if extracted_folder.exists():
+                if node_dir.exists():
+                    shutil.rmtree(node_dir)
+                extracted_folder.rename(node_dir)
+
+            if node_bin.exists():
+                os.chmod(node_bin, 0o755)
+
+            if tar_path.exists():
+                tar_path.unlink()
+
+            return str(node_bin)
+        except Exception:
+            if tar_path.exists():
+                try:
+                    tar_path.unlink()
+                except Exception:
+                    pass
+            return "node"
+
     def _compute_pagerank(self, nodes: list[GraphNode], edges: list[GraphEdge], damping: float = 0.85, max_iter: int = 20) -> dict[str, float]:
         n = len(nodes)
         if n == 0:
@@ -434,9 +499,23 @@ class GraphRetrievalService:
             encoding="utf-8"
         )
 
+        # Dynamically locate the graphify executable (especially on Streamlit Cloud)
+        import sys
+        import shutil
+        graphify_cli = shutil.which("graphify")
+        if not graphify_cli:
+            scripts_dir = Path(sys.executable).resolve().parent
+            for suffix in [".exe", ".cmd", ""]:
+                candidate = scripts_dir / f"graphify{suffix}"
+                if candidate.exists():
+                    graphify_cli = str(candidate)
+                    break
+            if not graphify_cli:
+                graphify_cli = "graphify" # fallback
+
         try:
             proc = subprocess.run(
-                ["graphify", "query", query, "--mode", graphify_mode, "--budget", str(target_budget)],
+                [graphify_cli, "query", query, "--mode", graphify_mode, "--budget", str(target_budget)],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
@@ -476,12 +555,21 @@ class GraphRetrievalService:
         """Try external CodeGraph Node.js CLI. Raise an error if it is missing or fails."""
         repo_root = self.storage.repo_source_dir(repo_id)
 
+        # Get node executable path (guarantees Node 22.5+ on Streamlit Cloud)
+        node_path = self._ensure_node_22()
+
         # Ensure node_modules dependencies are installed (specifically for Streamlit Cloud startup/deployment)
         node_modules_dir = Path.cwd() / "node_modules" / "@colbymchenry" / "codegraph"
         if not node_modules_dir.exists():
+            # If we downloaded a custom Node 22 path, we must use the npm binary in that same package or system npm
+            npm_path = "npm"
+            if node_path != "node":
+                npm_cand = Path(node_path).parent / "npm"
+                if npm_cand.exists():
+                    npm_path = str(npm_cand)
             try:
                 subprocess.run(
-                    ["npm", "install"],
+                    [npm_path, "install"],
                     cwd=str(Path.cwd()),
                     capture_output=True,
                     encoding="utf-8",
@@ -522,7 +610,7 @@ class GraphRetrievalService:
         
         try:
             proc = subprocess.run(
-                ["node", str(script_path), query],
+                [node_path, str(script_path), query],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
