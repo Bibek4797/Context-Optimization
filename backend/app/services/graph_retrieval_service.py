@@ -42,9 +42,10 @@ class GraphRetrievalService:
         import tarfile
         import ssl
 
-        # Check if system node is available and supports node:sqlite
+        # Check if system node is available, >= 22.5.0, and supports node:sqlite
         try:
-            proc = subprocess.run(["node", "-e", "require('node:sqlite')"], capture_output=True, text=True, timeout=5)
+            check_script = "const [maj, min] = process.versions.node.split('.').map(Number); if (maj < 22 || (maj === 22 && min < 5)) process.exit(1); require('node:sqlite');"
+            proc = subprocess.run(["node", "-e", check_script], capture_output=True, text=True, timeout=5)
             if proc.returncode == 0:
                 return "node"
         except Exception:
@@ -58,9 +59,10 @@ class GraphRetrievalService:
         node_bin = node_dir / "bin" / "node"
 
         if node_bin.exists():
-            # Verify that this binary is actually executable and supports node:sqlite
+            # Verify that this binary is actually executable, >= 22.5.0, and supports node:sqlite
             try:
-                proc = subprocess.run([str(node_bin), "-e", "require('node:sqlite')"], capture_output=True, text=True, timeout=5)
+                check_script = "const [maj, min] = process.versions.node.split('.').map(Number); if (maj < 22 || (maj === 22 && min < 5)) process.exit(1); require('node:sqlite');"
+                proc = subprocess.run([str(node_bin), "-e", check_script], capture_output=True, text=True, timeout=5)
                 if proc.returncode == 0:
                     return str(node_bin)
             except Exception:
