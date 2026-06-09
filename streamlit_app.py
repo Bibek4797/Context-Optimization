@@ -1190,7 +1190,6 @@ def inject_premium_styles() -> None:
 def main() -> None:
     inject_premium_styles()
     st.markdown('<h1 class="main-header">Context Optimization Engine</h1>', unsafe_allow_html=True)
-    st.caption("Stage 1 public demo: Python repo ingestion, CodeGraph, Graphify, token accounting, Gemini QA.")
 
     if "session_id" not in st.session_state:
         st.session_state.session_id = uuid4().hex
