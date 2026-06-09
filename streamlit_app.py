@@ -69,6 +69,14 @@ def ensure_node_dependencies() -> None:
             text=True,
             cwd=str(PROJECT_ROOT)
         )
+        if proc.returncode != 0:
+            # Try with the --experimental-sqlite flag in case Node 22 requires it
+            proc = subprocess.run(
+                ["node", "--experimental-sqlite", "-e", "require('@colbymchenry/codegraph')"],
+                capture_output=True,
+                text=True,
+                cwd=str(PROJECT_ROOT)
+            )
         if proc.returncode == 0:
             return
     except Exception:

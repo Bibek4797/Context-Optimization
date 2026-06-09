@@ -45,7 +45,7 @@ class GraphRetrievalService:
         # Check if system node is available, >= 22.5.0, and supports node:sqlite
         try:
             check_script = "const [maj, min] = process.versions.node.split('.').map(Number); if (maj < 22 || (maj === 22 && min < 5)) process.exit(1); require('node:sqlite');"
-            proc = subprocess.run(["node", "-e", check_script], capture_output=True, text=True, timeout=5)
+            proc = subprocess.run(["node", "--experimental-sqlite", "-e", check_script], capture_output=True, text=True, timeout=5)
             if proc.returncode == 0:
                 return "node"
         except Exception:
@@ -62,7 +62,7 @@ class GraphRetrievalService:
             # Verify that this binary is actually executable, >= 22.5.0, and supports node:sqlite
             try:
                 check_script = "const [maj, min] = process.versions.node.split('.').map(Number); if (maj < 22 || (maj === 22 && min < 5)) process.exit(1); require('node:sqlite');"
-                proc = subprocess.run([str(node_bin), "-e", check_script], capture_output=True, text=True, timeout=5)
+                proc = subprocess.run([str(node_bin), "--experimental-sqlite", "-e", check_script], capture_output=True, text=True, timeout=5)
                 if proc.returncode == 0:
                     return str(node_bin)
             except Exception:
@@ -636,7 +636,7 @@ class GraphRetrievalService:
         
         try:
             proc = subprocess.run(
-                [node_path, str(script_path), query],
+                [node_path, "--experimental-sqlite", str(script_path), query],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
