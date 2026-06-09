@@ -25,6 +25,8 @@ class GraphRetrievalResult:
 
 
 class GraphRetrievalService:
+    _download_attempted = False
+
     def __init__(self, storage: LocalStorage, token_service: TokenService) -> None:
         self.storage = storage
         self.token_service = token_service
@@ -40,29 +42,43 @@ class GraphRetrievalService:
         import tarfile
         import ssl
 
-        # Check if system node is >= 22.5.0 (node:sqlite support)
+        # Check if system node is available and supports node:sqlite
         try:
-            proc = subprocess.run(["node", "-v"], capture_output=True, text=True, timeout=5)
+            proc = subprocess.run(["node", "-e", "require('node:sqlite')"], capture_output=True, text=True, timeout=5)
             if proc.returncode == 0:
-                v_str = proc.stdout.strip().lstrip("v")
-                parts = v_str.split(".")
-                if parts:
-                    major = int(parts[0])
-                    minor = int(parts[1]) if len(parts) > 1 else 0
-                    if major > 22 or (major == 22 and minor >= 5):
-                        return "node"
+                return "node"
         except Exception:
             pass
 
         # We only download the precompiled binary on Linux (Streamlit Cloud runs on Linux x64)
-        if sys.platform != "linux":
+        if not sys.platform.startswith("linux"):
             return "node"
 
         node_dir = self.storage.data_dir / "bin" / "node-v22.11.0"
         node_bin = node_dir / "bin" / "node"
 
         if node_bin.exists():
-            return str(node_bin)
+            # Verify that this binary is actually executable and supports node:sqlite
+            try:
+                proc = subprocess.run([str(node_bin), "-e", "require('node:sqlite')"], capture_output=True, text=True, timeout=5)
+                if proc.returncode == 0:
+                    return str(node_bin)
+            except Exception:
+                pass
+
+            # If it's invalid or doesn't support node:sqlite, delete it so we can re-download (only if we haven't already tried this session)
+            if not GraphRetrievalService._download_attempted:
+                try:
+                    if node_dir.exists():
+                        shutil.rmtree(node_dir)
+                except Exception:
+                    pass
+
+        # If we already tried downloading this session and it's still invalid, don't download again to prevent infinite loops
+        if GraphRetrievalService._download_attempted:
+            return "node"
+
+        GraphRetrievalService._download_attempted = True
 
         # Download tarball (using .tar.gz for universal gzip extraction support)
         node_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -608,7 +624,8 @@ class GraphRetrievalService:
             "    if (cg.close) await cg.close();\n"
             "  } catch (e) {\n"
             "    console.error(e && e.stack ? e.stack : e);\n"
-            "    process.exit(2);\n"
+            "    console.error('Executed Node.js version:', process.version);\n"
+            "    process.exitCode = 2;\n"
             "  }\n"
             "})();\n"
         )
@@ -642,8 +659,15 @@ class GraphRetrievalService:
 
         if proc.returncode != 0:
             stderr = (proc.stderr or "").strip() or (proc.stdout or "").strip()
+            node_version = "unknown"
+            try:
+                check_proc = subprocess.run([node_path, "-v"], capture_output=True, text=True, timeout=5)
+                node_version = check_proc.stdout.strip()
+            except Exception:
+                pass
             raise RuntimeError(
                 f"Internal engine fails: CodeGraph CLI Node.js process failed (Exit Code {proc.returncode}). "
+                f"Executed Node version: {node_version} (Path: {node_path}). "
                 f"Error: {stderr}"
             )
 
