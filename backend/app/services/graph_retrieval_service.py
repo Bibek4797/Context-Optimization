@@ -34,7 +34,7 @@ class GraphRetrievalService:
         self.codegraph_service = CodeGraphService()
 
     def _ensure_node_22(self) -> str:
-        """Ensure Node.js 22+ is available on Linux/Streamlit. Returns node path or 'node'."""
+        """Ensure Node.js 22+ with node:sqlite and FTS5 support is available. Returns node path or 'node'."""
         import sys
         import os
         import shutil
@@ -42,9 +42,12 @@ class GraphRetrievalService:
         import tarfile
         import ssl
 
-        # Check if system node is available, >= 22.5.0, and supports node:sqlite
+        # Check if system node is available, >= 22.5.0, and supports node:sqlite with FTS5
         try:
-            check_script = "const [maj, min] = process.versions.node.split('.').map(Number); if (maj < 22 || (maj === 22 && min < 5)) process.exit(1); require('node:sqlite');"
+            check_script = (
+                "const db = new (require('node:sqlite').DatabaseSync)(':memory:'); "
+                "db.exec('CREATE VIRTUAL TABLE t USING fts5(c);');"
+            )
             proc = subprocess.run(["node", "--experimental-sqlite", "-e", check_script], capture_output=True, text=True, timeout=5)
             if proc.returncode == 0:
                 return "node"
@@ -55,20 +58,23 @@ class GraphRetrievalService:
         if not sys.platform.startswith("linux"):
             return "node"
 
-        node_dir = self.storage.data_dir / "bin" / "node-v22.11.0"
-        node_bin = node_dir / "bin" / "node"
+        node_dir = self.storage.data_dir / "bin" / "node-codegraph"
+        node_bin = node_dir / "node"
 
         if node_bin.exists():
-            # Verify that this binary is actually executable, >= 22.5.0, and supports node:sqlite
+            # Verify that this binary is actually executable, >= 22.5.0, and supports node:sqlite with FTS5
             try:
-                check_script = "const [maj, min] = process.versions.node.split('.').map(Number); if (maj < 22 || (maj === 22 && min < 5)) process.exit(1); require('node:sqlite');"
+                check_script = (
+                    "const db = new (require('node:sqlite').DatabaseSync)(':memory:'); "
+                    "db.exec('CREATE VIRTUAL TABLE t USING fts5(c);');"
+                )
                 proc = subprocess.run([str(node_bin), "--experimental-sqlite", "-e", check_script], capture_output=True, text=True, timeout=5)
                 if proc.returncode == 0:
                     return str(node_bin)
             except Exception:
                 pass
 
-            # If it's invalid or doesn't support node:sqlite, delete it so we can re-download (only if we haven't already tried this session)
+            # If it's invalid or doesn't support node:sqlite/FTS5, delete it so we can re-download (only if we haven't already tried this session)
             if not GraphRetrievalService._download_attempted:
                 try:
                     if node_dir.exists():
@@ -82,10 +88,10 @@ class GraphRetrievalService:
 
         GraphRetrievalService._download_attempted = True
 
-        # Download tarball (using .tar.gz for universal gzip extraction support)
+        # Download tarball (using CodeGraph self-contained release which vendors a custom Node binary compiled with FTS5)
         node_dir.parent.mkdir(parents=True, exist_ok=True)
         tar_path = self.storage.data_dir / "bin" / "node.tar.gz"
-        url = "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.gz"
+        url = "https://github.com/colbymchenry/codegraph/releases/download/v0.9.9/codegraph-linux-x64.tar.gz"
 
         try:
             # Bypass SSL certificate check (commonly required on Streamlit containers with outdated certs)
@@ -96,7 +102,7 @@ class GraphRetrievalService:
             with tarfile.open(tar_path, "r:gz") as tar:
                 tar.extractall(path=node_dir.parent)
 
-            extracted_folder = node_dir.parent / "node-v22.11.0-linux-x64"
+            extracted_folder = node_dir.parent / "codegraph-linux-x64"
             if extracted_folder.exists():
                 if node_dir.exists():
                     shutil.rmtree(node_dir)
