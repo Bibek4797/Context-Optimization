@@ -121,13 +121,4 @@ data/
 - Graphify native output depends on a locally installed `graphify` CLI.
 - Local JSON storage is intended for Stage 1, not multi-user production.
 
-## Stage 2 Roadmap
 
-- Background workers and resumable ingestion.
-- Incremental re-analysis on file changes.
-- Deeper CodeGraph resolution with import alias tracking and type hints.
-- Native Graphify install management and richer normalization.
-- Hybrid lexical/vector retrieval.
-- Multi-provider LLM support.
-- Persistent project/session management.
-- Exportable reports for token savings and context selection traces.
