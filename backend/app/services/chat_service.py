@@ -33,7 +33,13 @@ class ChatService:
 
 
 
-    def graph_optimized_qa(self, repo_id: str, query: str, session_id: str | None = None, source_selection: str = "codegraph", max_nodes: int = 8, rectify: bool = False, retrieval_method: str = "internal", graphify_mode: str = "bfs") -> QueryRecord:
+    def graph_optimized_qa(
+        self, repo_id: str, query: str, session_id: str | None = None,
+        source_selection: str = "codegraph", max_nodes: int = 8,
+        rectify: bool = False, retrieval_method: str = "internal",
+        graphify_mode: str = "bfs", max_anchors: int | None = None,
+        max_neighbors: int | None = None,
+    ) -> QueryRecord:
         if self.storage.load_repo_metadata(repo_id) is None:
             raise ValueError("Repo not found.")
         session_id = session_id or uuid4().hex
@@ -57,7 +63,9 @@ class ChatService:
                 max_nodes=max_nodes, 
                 source_selection=source_selection,
                 retrieval_method=retrieval_method,
-                graphify_mode=graphify_mode
+                graphify_mode=graphify_mode,
+                max_anchors=max_anchors,
+                max_neighbors=max_neighbors
             )
             snippets = graph_context.snippets
             selected_nodes = graph_context.selected_nodes

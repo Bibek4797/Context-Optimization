@@ -34,7 +34,7 @@ from app.services.tree_sitter_service import TreeSitterService  # noqa: E402
 st.set_page_config(
     page_title="Context Optimization Engine",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -134,6 +134,59 @@ def services():
 storage, pipeline, repo_service, chat_service, llm_provider = services()
 
 
+# ── Streamlit Performance Cache Layers ──
+
+@st.cache_resource(show_spinner=False)
+def cached_load_codegraph(repo_id: str, updated_at: str) -> GraphDocument | None:
+    return storage.load_codegraph(repo_id)
+
+@st.cache_resource(show_spinner=False)
+def cached_load_graphify(repo_id: str, updated_at: str) -> GraphDocument | None:
+    return storage.load_graphify(repo_id)
+
+@st.cache_data(show_spinner=False)
+def cached_load_files_df(repo_id: str, updated_at: str) -> list[dict]:
+    files = storage.load_files(repo_id)
+    return [file.model_dump() for file in files]
+
+@st.cache_data(show_spinner=False)
+def cached_get_graph_dot(repo_id: str, kind: str, updated_at: str, max_nodes: int = 80, max_edges: int = 160) -> str:
+    graph = storage.load_codegraph(repo_id) if kind == "codegraph" else storage.load_graphify(repo_id)
+    if not graph:
+        return ""
+    return graph_to_dot(graph, max_nodes=max_nodes, max_edges=max_edges)
+
+@st.cache_data(show_spinner=False)
+def cached_get_graph_nodes_df(repo_id: str, kind: str, updated_at: str) -> list[dict]:
+    graph = storage.load_codegraph(repo_id) if kind == "codegraph" else storage.load_graphify(repo_id)
+    if not graph:
+        return []
+    return [node.model_dump() for node in graph.nodes]
+
+@st.cache_data(show_spinner=False)
+def cached_get_graph_edges_df(repo_id: str, kind: str, updated_at: str) -> list[dict]:
+    graph = storage.load_codegraph(repo_id) if kind == "codegraph" else storage.load_graphify(repo_id)
+    if not graph:
+        return []
+    return [edge.model_dump() for edge in graph.edges]
+
+@st.cache_data(show_spinner=False)
+def cached_load_queries(repo_id: str, queries_dir_path: str, count: int) -> list:
+    from app.models.schemas import QueryRecord
+    import json
+    queries_dir = Path(queries_dir_path)
+    queries = []
+    if queries_dir.exists():
+        for file_path in queries_dir.glob("*.json"):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    queries.append(QueryRecord.model_validate(data))
+            except Exception:
+                pass
+    return sorted(queries, key=lambda q: q.created_at)
+
+
 def current_repo() -> RepoMetadata | None:
     repo_id = st.session_state.get("repo_id")
     if not repo_id:
@@ -192,76 +245,12 @@ def render_status(repo: RepoMetadata | None) -> None:
     st.sidebar.write(f"Model: **{model_info.model}**")
     st.sidebar.write(f"Gemini key: **{'configured' if model_info.configured else 'missing'}**")
     
-    st.sidebar.subheader("Retrieval Engine")
-    retrieval_method_label = st.sidebar.selectbox(
-        "Algorithm",
-        ["Internal Graph Retrieval (Default)", "Advanced Hybrid Scoring System"],
-        index=0,
-        help=(
-            "**Internal Graph Retrieval** — Uses the native engines of CodeGraph / Graphify (external CLI tools when available, "
-            "built-in Python query engine as fallback) to directly identify relevant nodes and edges for context.\n\n"
-            "**Advanced Hybrid Scoring** — Layers BM25 TF-IDF, PageRank centrality, edge-weighted neighbor propagation, "
-            "and traceback line number matching on top of the graph."
-        ),
-    )
-    is_advanced = "Advanced" in retrieval_method_label
-    st.session_state.retrieval_method = "advanced" if is_advanced else "internal"
-
-    st.sidebar.subheader("Context Size Budget")
-    budget_label = st.sidebar.selectbox(
-        "Retrieval Scale Selector",
-        ["Balanced (Recommended)", "Tight (Token Saver)", "Deep (Large Codebase Coverage)"],
-        index=0,
-        help="Adjust context bounds: Balanced is ideal for normal use, Tight minimizes token cost, and Deep is suited for large repositories with many files."
-    )
-    
-    if budget_label == "Tight (Token Saver)":
-        st.session_state.graph_max_nodes = 8
-        anchors, neighbors = 2, 4
-    elif budget_label == "Deep (Large Codebase Coverage)":
-        st.session_state.graph_max_nodes = 24
-        anchors, neighbors = 8, 16
-    else: # Balanced
-        st.session_state.graph_max_nodes = 14
-        anchors, neighbors = 4, 8
-
-    st.sidebar.subheader("Graphify Traversal Mode")
-    traversal_label = st.sidebar.radio(
-        "Search Strategy",
-        ["Broad Architecture (BFS)", "Deep Execution Path (DFS)"],
-        index=0,
-        help=(
-            "**BFS (Breadth-First)** — Explores the call graph broadly, gathering context from many interconnected functions and modules. "
-            "Best for understanding overall architecture and cross-module dependencies.\n\n"
-            "**DFS (Depth-First)** — Follows a single execution path deeply through the call chain. "
-            "Best for tracing specific control flows, debugging, and understanding deep call hierarchies."
-        ),
-    )
-    st.session_state.graphify_mode = "dfs" if "DFS" in traversal_label else "bfs"
-
-    if is_advanced:
-        st.sidebar.caption(
-            f"**Active Limits:** Anchors (Full): `{anchors}` | Neighbors (Signature): `{neighbors}`"
-        )
-    else:
-        gf_budget = st.session_state.graph_max_nodes * 250
-        st.sidebar.caption(
-            f"**Active Limits:** Max Nodes: `{st.session_state.graph_max_nodes}` | "
-            f"Graphify Budget: `{gf_budget}` chars | Mode: `{st.session_state.graphify_mode.upper()}`"
-        )
-    
     st.sidebar.subheader("Codebase Rectifier")
     st.session_state.rectify_enabled = st.sidebar.checkbox(
         "🔍 Enable Error Rectification",
         value=False,
         help="When enabled, the assistant will propose direct code modifications when bugs or errors are identified, allowing you to overwrite files with a single click."
     )
-
-    
-    if repo and repo.warnings:
-        with st.sidebar.expander("Warnings", expanded=True):
-            for warning in repo.warnings:
-                render_notice(warning)
 
 
 def render_notice(message: str) -> None:
@@ -271,19 +260,10 @@ def render_notice(message: str) -> None:
     st.warning(message)
 
 
-def render_logs(repo: RepoMetadata | None) -> None:
-    st.subheader("Developer / Debug Logs")
-    if not repo:
-        st.info("Load a repository to see pipeline logs.")
-        return
-    logs = storage.load_logs(repo.repo_id)
-    if not logs:
-        st.info("No logs yet.")
-        return
-    st.dataframe(logs, use_container_width=True, hide_index=True)
 
 
-def render_upload_import() -> None:
+
+def render_upload_import(repo: RepoMetadata | None) -> None:
     st.header("Upload Or Import")
 
     SUPPORTED_EXTENSIONS = [
@@ -303,9 +283,9 @@ def render_upload_import() -> None:
     if st.button("Analyze files", disabled=not uploaded_files, type="primary"):
         with st.spinner("Analyzing uploaded files..."):
             try:
-                repo = ingest_uploaded_files(uploaded_files)
-                set_repo(repo)
-                st.success(f"Loaded {repo.name} ({len(uploaded_files)} file{'s' if len(uploaded_files) != 1 else ''})")
+                new_repo = ingest_uploaded_files(uploaded_files)
+                set_repo(new_repo)
+                st.success(f"Loaded {new_repo.name} ({len(uploaded_files)} file{'s' if len(uploaded_files) != 1 else ''})")
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
@@ -321,9 +301,9 @@ def render_upload_import() -> None:
         if st.button("Analyze zip", disabled=uploaded_zip is None, type="primary"):
             with st.spinner("Extracting and analyzing repository..."):
                 try:
-                    repo = ingest_uploaded_zip(uploaded_zip)
-                    set_repo(repo)
-                    st.success(f"Loaded {repo.name}")
+                    new_repo = ingest_uploaded_zip(uploaded_zip)
+                    set_repo(new_repo)
+                    st.success(f"Loaded {new_repo.name}")
                     st.rerun()
                 except Exception as exc:
                     st.error(str(exc))
@@ -334,9 +314,9 @@ def render_upload_import() -> None:
         if st.button("Clone and analyze", disabled=not github_url.strip()):
             with st.spinner("Cloning and analyzing repository..."):
                 try:
-                    repo = repo_service.import_github(github_url.strip())
-                    set_repo(repo)
-                    st.success(f"Loaded {repo.name}")
+                    new_repo = repo_service.import_github(github_url.strip())
+                    set_repo(new_repo)
+                    st.success(f"Loaded {new_repo.name}")
                     st.rerun()
                 except Exception as exc:
                     st.error(str(exc))
@@ -346,20 +326,24 @@ def render_upload_import() -> None:
         "The app automatically skips .git, virtual environments (.venv), node_modules, build outputs, and caches."
     )
 
-
-def render_repo_analysis(repo: RepoMetadata | None) -> None:
-    st.header("Repo Analysis")
-    if not repo:
-        st.info("Load a repository first.")
-        return
-    metric_row(repo)
-    st.write(f"Origin: `{repo.origin}`")
-    if repo.error:
-        st.error(repo.error)
-    files = storage.load_files(repo.repo_id)
-    st.subheader("Python Files")
-    st.dataframe([file.model_dump() for file in files], use_container_width=True, hide_index=True)
-    render_logs(repo)
+    if repo:
+        st.markdown("---")
+        st.subheader("Repo Analysis")
+        metric_row(repo)
+        st.write(f"Origin: `{repo.origin}`")
+        if repo.error:
+            st.error(repo.error)
+        if repo.warnings:
+            with st.expander("⚠️ System Warnings", expanded=False):
+                for warning in repo.warnings:
+                    render_notice(warning)
+        files_df = cached_load_files_df(repo.repo_id, str(repo.updated_at))
+        clean_files = [
+            {"File Path": f.get("path"), "Language": f.get("language")}
+            for f in files_df
+        ]
+        st.subheader("Files Metadata")
+        st.dataframe(clean_files, use_container_width=True, hide_index=True)
 
 
 def node_label(node: TreeNode) -> str:
@@ -559,10 +543,7 @@ def render_graph_schematic(kind: str) -> None:
                 | **`function`** / **`method`** | Independent utility functions or class-bound methods. | `signature`, parameters, return type, docstrings | Defines modular logic boundaries (code loaded on-demand from disk). |
                 """
             )
-            st.info(
-                "💡 **How it saves tokens:** Instead of sending the full file, if a function is not matching the query, "
-                "we only extract its **light signature** (signature + docstring header) in neighborhood traversal."
-            )
+
         with t2:
             st.markdown(
                 """
@@ -585,10 +566,7 @@ def render_graph_schematic(kind: str) -> None:
                 | **`component`** | A macro-level class or concept design boundary. | Design role, interaction count, encapsulation level | Identifies core concepts and system boundaries. |
                 """
             )
-            st.info(
-                "💡 **How it saves tokens:** Graphify **prunes all micro-nodes** (helper functions/methods) "
-                "to keep the context focused on high-level system-level interactions and architecture."
-            )
+
         with t2:
             st.markdown(
                 """
@@ -646,7 +624,7 @@ def render_graph(repo: RepoMetadata | None, kind: str) -> None:
     if not repo:
         st.info("Load a repository first.")
         return
-    graph = storage.load_codegraph(repo.repo_id) if kind == "codegraph" else storage.load_graphify(repo.repo_id)
+    graph = cached_load_codegraph(repo.repo_id, str(repo.updated_at)) if kind == "codegraph" else cached_load_graphify(repo.repo_id, str(repo.updated_at))
     if not graph:
         st.error(f"{title} output not found.")
         return
@@ -657,16 +635,15 @@ def render_graph(repo: RepoMetadata | None, kind: str) -> None:
         st.info(
             "Native Graphify output is not available in this environment. This tab is showing the saved Graphify adapter output plus a clearly labeled fallback graph derived from CodeGraph."
         )
-    cols = st.columns(4)
+    cols = st.columns(3)
     cols[0].metric("Source", graph.source)
     cols[1].metric("Nodes", len(graph.nodes))
     cols[2].metric("Edges", len(graph.edges))
-    cols[3].metric("Raw output", "saved" if graph.raw_output_path else "none")
-    st.graphviz_chart(graph_to_dot(graph), use_container_width=True)
+    st.graphviz_chart(cached_get_graph_dot(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True)
     with st.expander("Nodes"):
-        st.dataframe([node.model_dump() for node in graph.nodes], use_container_width=True, hide_index=True)
+        st.dataframe(cached_get_graph_nodes_df(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True, hide_index=True)
     with st.expander("Edges"):
-        st.dataframe([edge.model_dump() for edge in graph.edges], use_container_width=True, hide_index=True)
+        st.dataframe(cached_get_graph_edges_df(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True, hide_index=True)
     if kind == "graphify" and graph.raw_output_path:
         with st.expander("Raw Graphify adapter output"):
             raw_path = Path(graph.raw_output_path)
@@ -689,20 +666,9 @@ def render_tokens(repo: RepoMetadata | None) -> None:
         return
 
     # 1. Load all queries run so far
-    import json
     queries_dir = storage.repo_state_dir(repo.repo_id) / "queries"
-    queries = []
-    if queries_dir.exists():
-        for file_path in queries_dir.glob("*.json"):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    queries.append(QueryRecord.model_validate(data))
-            except Exception:
-                pass
-                
-    # Sort queries by creation time
-    queries = sorted(queries, key=lambda q: q.created_at)
+    count = len(list(queries_dir.glob("*.json"))) if queries_dir.exists() else 0
+    queries = cached_load_queries(repo.repo_id, str(queries_dir), count)
 
     if queries:
         st.subheader("📊 Query Token Usage & Savings History")
@@ -727,7 +693,19 @@ def render_tokens(repo: RepoMetadata | None) -> None:
             
             saved = max(0, baseline_tokens - prompt_tokens) if baseline_tokens > 0 else 0
             pct = (saved / baseline_tokens * 100) if baseline_tokens > 0 else 0.0
-            
+            raw_strategy = getattr(q_rec, "retrieval_strategy", "") or ""
+            if "Advanced" in raw_strategy:
+                engine_name = "Advanced Hybrid"
+            elif "Graphify" in raw_strategy:
+                engine_name = "Graphify CLI"
+            elif "CodeGraph" in raw_strategy:
+                engine_name = "CodeGraph CLI"
+            else:
+                if q_rec.selected_nodes and any(n.node_id.startswith("graphify:") for n in q_rec.selected_nodes):
+                    engine_name = "Graphify CLI"
+                else:
+                    engine_name = "CodeGraph CLI"
+
             table_rows.append({
                 "Time": q_rec.created_at.strftime("%H:%M:%S") if q_rec.created_at else "N/A",
                 "Query / Question": q_text,
@@ -737,7 +715,7 @@ def render_tokens(repo: RepoMetadata | None) -> None:
                 "Total Query Tokens": total_tokens,
                 "Tokens Saved": saved,
                 "Savings %": f"{round(pct, 2)}%",
-                "Latency": f"{q_rec.latency_ms} ms"
+                "Engine / Strategy": engine_name
             })
             
         if table_rows:
@@ -1005,46 +983,193 @@ def qa_prompt_help() -> str:
 
 
 
-def render_graph_qa(repo: RepoMetadata | None) -> None:
-    st.header("Graph-Optimized Repo QA")
+def render_codegraph_qa(repo: RepoMetadata | None) -> None:
+    st.header("CodeGraph QA")
     if not repo:
         st.info("Load a repository first.")
         return
-    codegraph = storage.load_codegraph(repo.repo_id)
-    graphify = storage.load_graphify(repo.repo_id)
-    st.caption(
-        f"Graph QA retrieves from CodeGraph ({len(codegraph.nodes) if codegraph else 0} nodes) plus "
-        f"{graphify.source if graphify else 'missing Graphify'} ({len(graphify.nodes) if graphify else 0} nodes)."
-    )
-    
-    # Expose graph source selection dropdown
-    source_label = st.selectbox(
-        "Retrieve Graph Context from:",
-        ["CodeGraph (Static Structure) Only", "Graphify (Flow Analysis) Only"],
-        index=0,
-        key="graph_source_select"
-    )
-    source_selection = "codegraph"
-    if "Flow Analysis" in source_label:
-        source_selection = "graphify"
+        
+    codegraph_path = storage.repo_state_dir(repo.repo_id) / "codegraph.json"
+    if not codegraph_path.exists() or codegraph_path.stat().st_size == 0:
+        st.error("No CodeGraph graph found. Please build or import a repository with CodeGraph output first.")
+        return
 
-    query = st.text_area("Question", placeholder=qa_prompt_help(), key="graph_query")
-    if st.button("Ask Graph QA", disabled=not query.strip(), type="primary"):
+    left, right = st.columns([3, 1])
+    with left:
+        question = st.text_area(
+            "Ask a question about codebase symbols and relationships:",
+            placeholder="e.g. 'How does TokenService calculate prompt savings?'",
+            key="codegraph_qa_question"
+        )
+    with right:
+        retrieval_method_label = st.selectbox(
+            "Retrieval Engine",
+            ["Internal Graph Retrieval (Default)", "Advanced Hybrid Scoring System"],
+            index=0,
+            key="codegraph_retrieval_method",
+            help="Select the retrieval algorithm for CodeGraph."
+        )
+        retrieval_method = "advanced" if "Advanced" in retrieval_method_label else "internal"
+
+        max_nodes_input = st.text_input(
+            "Max Nodes:",
+            value="8",
+            key="codegraph_max_nodes_input",
+            disabled=(retrieval_method == "advanced"),
+            help="Limits context details sent to the LLM. Larger number provides more files but uses more tokens."
+        )
+        
+        max_anchors = None
+        max_neighbors = None
+        if retrieval_method == "advanced":
+            max_anchors_input = st.text_input(
+                "Primary Anchors (Full):",
+                value="4",
+                key="codegraph_max_anchors",
+                help="Number of full context snippets to include."
+            )
+            max_neighbors_input = st.text_input(
+                "Neighbors (Signature):",
+                value="8",
+                key="codegraph_max_neighbors",
+                help="Number of signature-only nodes to include."
+            )
+            if max_anchors_input.strip():
+                try:
+                    max_anchors = int(max_anchors_input.strip())
+                except ValueError:
+                    st.warning("Please enter a valid integer for Primary Anchors.")
+            if max_neighbors_input.strip():
+                try:
+                    max_neighbors = int(max_neighbors_input.strip())
+                except ValueError:
+                    st.warning("Please enter a valid integer for Neighbors.")
+
+    max_nodes_val = 8
+    if max_nodes_input.strip():
+        try:
+            max_nodes_val = int(max_nodes_input.strip())
+        except ValueError:
+            st.warning("Please enter a valid integer for Max Nodes.")
+            
+    if st.button("Ask CodeGraph QA", disabled=not question.strip(), type="primary"):
         with st.spinner("Selecting graph neighborhood and calling Gemini..."):
             record = chat_service.graph_optimized_qa(
                 repo.repo_id,
-                query.strip(),
+                question.strip(),
                 st.session_state.session_id,
-                source_selection=source_selection,
-                max_nodes=st.session_state.get("graph_max_nodes", 8),
+                source_selection="codegraph",
+                max_nodes=max_nodes_val,
                 rectify=st.session_state.get("rectify_enabled", False),
-                retrieval_method=st.session_state.get("retrieval_method", "internal"),
-                graphify_mode=st.session_state.get("graphify_mode", "bfs")
+                retrieval_method=retrieval_method,
+                graphify_mode="bfs",
+                max_anchors=max_anchors,
+                max_neighbors=max_neighbors
             )
-            st.session_state.graph_record = record
+            st.session_state.codegraph_record = record
 
-    if "graph_record" in st.session_state:
-        render_query_record(st.session_state.graph_record)
+    if "codegraph_record" in st.session_state:
+        render_query_record(st.session_state.codegraph_record)
+
+
+def render_graphify_qa(repo: RepoMetadata | None) -> None:
+    st.header("Graphify QA")
+    if not repo:
+        st.info("Load a repository first.")
+        return
+        
+    graphify_path = storage.repo_state_dir(repo.repo_id) / "graphify.json"
+    if not graphify_path.exists() or graphify_path.stat().st_size == 0:
+        st.error("No Graphify graph found. Please build or import a repository with Graphify output first.")
+        return
+
+    left, right = st.columns([3, 1])
+    with left:
+        question = st.text_area(
+            "Ask a question about codebase architecture:",
+            placeholder="e.g. 'How is TokenService connected to standard QA?'",
+            key="graphify_qa_question"
+        )
+    with right:
+        traversal_label = st.radio(
+            "Traversal Strategy",
+            ["Broad Architecture (BFS)", "Deep Execution Path (DFS)"],
+            index=0,
+            key="graphify_traversal_mode",
+            help="BFS explores the call graph broadly. DFS follows execution paths deeply."
+        )
+        graphify_mode = "dfs" if "DFS" in traversal_label else "bfs"
+        
+        retrieval_method_label = st.selectbox(
+            "Retrieval Engine",
+            ["Internal Graph Retrieval (Default)", "Advanced Hybrid Scoring System"],
+            index=0,
+            key="graphify_retrieval_method",
+            help="Select the retrieval algorithm for Graphify."
+        )
+        retrieval_method = "advanced" if "Advanced" in retrieval_method_label else "internal"
+
+        token_budget_input = st.text_input(
+            "Max Token Usage (Budget):",
+            value="2000",
+            key="graphify_token_budget",
+            disabled=(retrieval_method == "advanced"),
+            help="Max characters/tokens budget for retrieval. Maps to max_nodes = max(1, budget // 250)."
+        )
+        
+        max_anchors = None
+        max_neighbors = None
+        if retrieval_method == "advanced":
+            max_anchors_input = st.text_input(
+                "Primary Anchors (Full):",
+                value="4",
+                key="graphify_max_anchors",
+                help="Number of full context snippets to include."
+            )
+            max_neighbors_input = st.text_input(
+                "Neighbors (Signature):",
+                value="8",
+                key="graphify_max_neighbors",
+                help="Number of signature-only nodes to include."
+            )
+            if max_anchors_input.strip():
+                try:
+                    max_anchors = int(max_anchors_input.strip())
+                except ValueError:
+                    st.warning("Please enter a valid integer for Primary Anchors.")
+            if max_neighbors_input.strip():
+                try:
+                    max_neighbors = int(max_neighbors_input.strip())
+                except ValueError:
+                    st.warning("Please enter a valid integer for Neighbors.")
+
+    token_budget_val = 2000
+    if token_budget_input.strip():
+        try:
+            token_budget_val = int(token_budget_input.strip())
+        except ValueError:
+            st.warning("Please enter a valid integer for the token budget.")
+            
+    max_nodes = max(1, token_budget_val // 250)
+
+    if st.button("Ask Graphify QA", disabled=not question.strip(), type="primary"):
+        with st.spinner("Selecting graph neighborhood and calling Gemini..."):
+            record = chat_service.graph_optimized_qa(
+                repo.repo_id,
+                question.strip(),
+                st.session_state.session_id,
+                source_selection="graphify",
+                max_nodes=max_nodes,
+                rectify=st.session_state.get("rectify_enabled", False),
+                retrieval_method=retrieval_method,
+                graphify_mode=graphify_mode,
+                max_anchors=max_anchors,
+                max_neighbors=max_neighbors
+            )
+            st.session_state.graphify_record = record
+
+    if "graphify_record" in st.session_state:
+        render_query_record(st.session_state.graphify_record)
 
 
 
@@ -1055,12 +1180,14 @@ def inject_premium_styles() -> None:
         """
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         
         <style>
-            /* Apply Inter font universally */
+            /* Global dark-mode background and font */
             html, body, [class*="css"], .stApp {
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                background-color: #0b0f19 !important;
+                color: #f9fafb !important;
             }
             
             /* JetBrains Mono for Code Blocks */
@@ -1070,56 +1197,115 @@ def inject_premium_styles() -> None:
             
             /* Professional Gradient Header */
             .main-header {
-                font-size: 2.2rem;
-                font-weight: 700;
-                background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%);
+                font-size: 2.4rem;
+                font-weight: 800;
+                background: linear-gradient(135deg, #a855f7 0%, #6366f1 50%, #3b82f6 100%);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
-                margin-bottom: 0.5rem;
+                margin-bottom: 0.8rem;
                 letter-spacing: -0.025em;
             }
             
-            /* Subtle layout and card borders */
+            /* Glassmorphic card metrics */
             div[data-testid="stMetric"] {
-                background-color: rgba(128, 128, 128, 0.03);
-                border: 1px solid rgba(128, 128, 128, 0.15);
-                border-radius: 8px;
+                background: rgba(17, 24, 39, 0.6) !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                border-radius: 12px !important;
                 padding: 15px 20px;
-                transition: all 0.2s ease-in-out;
+                box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3) !important;
+                backdrop-filter: blur(8px) !important;
+                -webkit-backdrop-filter: blur(8px) !important;
+                transition: all 0.25s ease-in-out;
             }
             
             div[data-testid="stMetric"]:hover {
                 transform: translateY(-2px);
-                border-color: rgba(59, 130, 246, 0.4);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+                border-color: rgba(99, 102, 241, 0.4);
+                box-shadow: 0 10px 25px rgba(99, 102, 241, 0.15) !important;
             }
             
             /* Sidebar Styling */
             section[data-testid="stSidebar"] {
-                border-right: 1px solid rgba(128, 128, 128, 0.1);
+                background-color: #070a12 !important;
+                border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
             }
             
-            /* Professional Tab layout styling */
-            button[data-testid="stMarker"] {
+            /* Tabs customization */
+            button[data-baseweb="tab"] {
+                font-size: 0.95rem !important;
                 font-weight: 600 !important;
+                color: #9ca3af !important;
+                transition: all 0.2s ease !important;
+                background-color: transparent !important;
+                border: none !important;
+                padding: 8px 16px !important;
+            }
+            button[data-baseweb="tab"]:hover {
+                color: #f3f4f6 !important;
+                background-color: rgba(255, 255, 255, 0.02) !important;
+            }
+            button[data-baseweb="tab"][aria-selected="true"] {
+                color: #a5b4fc !important;
+                background-color: rgba(99, 102, 241, 0.1) !important;
+                border-radius: 6px;
             }
             
-            /* Smooth transitions for interactive elements */
+            /* Smooth transitions for interactive buttons */
             .stButton>button {
-                border-radius: 6px !important;
-                font-weight: 500 !important;
+                border-radius: 8px !important;
+                font-weight: 600 !important;
+                background: rgba(255, 255, 255, 0.05) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                color: #f3f4f6 !important;
                 transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
             }
             
             .stButton>button:hover {
-                box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2) !important;
+                background: rgba(255, 255, 255, 0.08) !important;
+                border-color: rgba(255, 255, 255, 0.2) !important;
+                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2) !important;
                 transform: translateY(-1px) !important;
+            }
+            
+            /* Primary buttons gradient */
+            .stButton>button[data-testid="baseButton-primary"] {
+                background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+                color: #ffffff !important;
+                border: none !important;
+                box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3) !important;
+            }
+            .stButton>button[data-testid="baseButton-primary"]:hover {
+                background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%) !important;
+                box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
+                transform: translateY(-1px) !important;
+            }
+            
+            /* Custom style for inputs */
+            div[data-baseweb="select"] > div {
+                background-color: #111827 !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                border-radius: 8px !important;
+            }
+            div[data-testid="stTextInput"] input, div[data-testid="stTextArea"] textarea {
+                background-color: #111827 !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                border-radius: 8px !important;
+                color: #f9fafb !important;
             }
             
             /* Premium Alert & Info Boxes */
             div[data-testid="stNotification"] {
                 border-radius: 8px !important;
-                border: 1px solid rgba(128, 128, 128, 0.1) !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                background-color: rgba(17, 24, 39, 0.6) !important;
+                backdrop-filter: blur(8px) !important;
+            }
+            
+            /* Dataframes and tables */
+            div[data-testid="stDataFrame"] {
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                border-radius: 12px !important;
+                overflow: hidden !important;
             }
         </style>
         """,
@@ -1139,23 +1325,23 @@ def main() -> None:
 
     tab_names = [
         "Upload / Import",
-        "Repo Analysis",
         "CodeGraph",
+        "CodeGraph QA",
         "Graphify",
-        "Graph QA",
+        "Graphify QA",
         "Token Analytics",
     ]
     tabs = st.tabs(tab_names)
     with tabs[0]:
-        render_upload_import()
+        render_upload_import(repo)
     with tabs[1]:
-        render_repo_analysis(repo)
-    with tabs[2]:
         render_graph(repo, "codegraph")
+    with tabs[2]:
+        render_codegraph_qa(repo)
     with tabs[3]:
         render_graph(repo, "graphify")
     with tabs[4]:
-        render_graph_qa(repo)
+        render_graphify_qa(repo)
     with tabs[5]:
         render_tokens(repo)
 

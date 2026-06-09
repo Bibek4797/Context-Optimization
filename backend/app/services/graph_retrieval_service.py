@@ -243,7 +243,12 @@ class GraphRetrievalService:
             return prefix + "\n\n... [Snippet Truncated - Declarations & Headers Expanded] ...\n" + "\n".join(extra_lines)
         return prefix + "\n\n... [Snippet Truncated] ..."
 
-    def build_context(self, repo_id: str, query: str, max_nodes: int = 8, source_selection: str = "codegraph", retrieval_method: str = "internal", graphify_mode: str = "bfs") -> GraphRetrievalResult:
+    def build_context(
+        self, repo_id: str, query: str, max_nodes: int = 8,
+        source_selection: str = "codegraph", retrieval_method: str = "internal",
+        graphify_mode: str = "bfs", max_anchors: int | None = None,
+        max_neighbors: int | None = None,
+    ) -> GraphRetrievalResult:
         codegraph = self.storage.load_codegraph(repo_id)
         graphify = self.storage.load_graphify(repo_id)
         if codegraph is None:
@@ -285,8 +290,15 @@ class GraphRetrievalService:
         else:
             scale_factor = 3.0
 
-        max_anchors = max(2, int(base_anchors * scale_factor))
-        max_neighbors = max(4, int(base_neighbors * scale_factor))
+        if max_anchors is not None:
+            max_anchors = max_anchors
+        else:
+            max_anchors = max(2, int(base_anchors * scale_factor))
+
+        if max_neighbors is not None:
+            max_neighbors = max_neighbors
+        else:
+            max_neighbors = max(4, int(base_neighbors * scale_factor))
 
         # 2. Run global PageRank centrality scoring
         pr_map = self._compute_pagerank(all_nodes, all_edges)
