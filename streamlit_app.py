@@ -854,59 +854,7 @@ def parse_and_render_code_fix(answer_text: str, repo_id: str) -> None:
                 st.error(f"❌ Error applying fix: {res.get('error')}")
 
 
-def subgraph_to_dot(record: QueryRecord) -> str:
-    nodes = record.selected_nodes
-    edges = record.selected_edges
-    strategy = getattr(record, "retrieval_strategy", "unknown")
-    is_advanced = "Advanced" in strategy
-    
-    lines = [
-        "digraph G {", 
-        "rankdir=LR;", 
-        "bgcolor=transparent;",
-        'node [shape=box, style="rounded,filled", fontname="Courier New", fontsize=9];'
-    ]
-    
-    # Identify which nodes are anchors based on source snippets
-    anchor_keys = set()
-    for snippet in record.source_snippets:
-        if snippet.source == "graph_anchor":
-            anchor_keys.add((snippet.file_path, snippet.line_start))
-            
-    # Render nodes with distinct color highlights
-    for node in nodes:
-        node_id_escaped = node.node_id.replace('"', "'")
-        label = f"[{node.node_type.upper()}]\\n{node.label}".replace('"', "'")
-        
-        if is_advanced:
-            is_anchor = (node.file_path, node.line_start) in anchor_keys
-            if is_anchor:
-                # Gold premium outline for Primary Anchors (full bodies)
-                lines.append(
-                    f'"{node_id_escaped}" [label="{label}", fillcolor="#fff3bf", color="#f08c00", penwidth=2.5];'
-                )
-            else:
-                # Sleek slate gray outline for Neighbor Nodes (signatures)
-                lines.append(
-                    f'"{node_id_escaped}" [label="{label}", fillcolor="#f1f3f5", color="#adb5bd", penwidth=1.2];'
-                )
-        else:
-            # Premium light blue outline for flat retrieved nodes in Internal mode
-            lines.append(
-                f'"{node_id_escaped}" [label="{label}", fillcolor="#e7f5ff", color="#228be6", penwidth=2.0];'
-            )
-            
-    # Render edges
-    visible_node_ids = {node.node_id for node in nodes}
-    for edge in edges:
-        if edge.source_node in visible_node_ids and edge.target_node in visible_node_ids:
-            label = edge.edge_type.replace('"', "'")
-            lines.append(
-                f'"{edge.source_node}" -> "{edge.target_node}" [label="{label}", color="#495057", fontcolor="#495057", fontsize=8];'
-            )
-            
-    lines.append("}")
-    return "\n".join(lines)
+
 
 
 def render_query_record(record: QueryRecord) -> None:
@@ -1022,15 +970,7 @@ def render_query_record(record: QueryRecord) -> None:
                 )
                 st.text_area("Gemini Final Prompt", full_raw_prompt, height=450)
 
-        # Graphical Subgraph Neighborhood representation
-        st.markdown("#### 🗺️ Context Neighborhood Map")
-        strategy = getattr(record, "retrieval_strategy", "unknown")
-        if "Advanced" in strategy:
-            st.caption("Selected structural neighborhood map for this query. Primary Anchors (Full context) are highlighted in **yellow/orange**, and Neighbor Nodes (Signature context) are in **gray**.")
-        else:
-            st.caption("Selected structural nodes and relationships retrieved by the native query engine, highlighted in **blue**.")
-        dot = subgraph_to_dot(record)
-        st.graphviz_chart(dot, use_container_width=True)
+
 
         with st.expander("Selected Graph Nodes"):
             st.dataframe([node.model_dump() for node in record.selected_nodes], use_container_width=True, hide_index=True)
