@@ -99,7 +99,16 @@ def repo_logs(repo_id: str, limit: int = Query(200, ge=1, le=1000)):
 @router.post("/chat/graph-optimized", response_model=QueryRecord)
 def graph_optimized_chat(request: ChatRequest) -> QueryRecord:
     try:
-        return chat_service.graph_optimized_qa(request.repo_id, request.query, request.session_id)
+        return chat_service.graph_optimized_qa(
+            repo_id=request.repo_id,
+            query=request.query,
+            session_id=request.session_id,
+            retrieval_method=request.retrieval_method or "internal",
+            max_nodes=request.max_nodes or 8,
+            max_anchors=request.max_anchors,
+            max_neighbors=request.max_neighbors,
+            graphify_mode=request.graphify_mode or "bfs"
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

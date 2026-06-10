@@ -1026,13 +1026,13 @@ def render_codegraph_qa(repo: RepoMetadata | None) -> None:
                 "Primary Anchors (Full):",
                 value="4",
                 key="codegraph_max_anchors",
-                help="Number of full context snippets to include."
+                help="Number of primary anchor nodes to include with full code."
             )
             max_neighbors_input = st.text_input(
-                "Neighbors (Signature):",
+                "Neighbors (Full):",
                 value="8",
                 key="codegraph_max_neighbors",
-                help="Number of signature-only nodes to include."
+                help="Number of neighboring nodes to include with full code."
             )
             if max_anchors_input.strip():
                 try:
@@ -1124,13 +1124,13 @@ def render_graphify_qa(repo: RepoMetadata | None) -> None:
                 "Primary Anchors (Full):",
                 value="4",
                 key="graphify_max_anchors",
-                help="Number of full context snippets to include."
+                help="Number of primary anchor nodes to include with full code."
             )
             max_neighbors_input = st.text_input(
-                "Neighbors (Signature):",
+                "Neighbors (Full):",
                 value="8",
                 key="graphify_max_neighbors",
-                help="Number of signature-only nodes to include."
+                help="Number of neighboring nodes to include with full code."
             )
             if max_anchors_input.strip():
                 try:

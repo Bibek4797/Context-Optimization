@@ -147,6 +147,11 @@ class ChatRequest(BaseModel):
     repo_id: str
     query: str = Field(min_length=1)
     session_id: str | None = None
+    retrieval_method: str | None = None
+    max_nodes: int | None = None
+    max_anchors: int | None = None
+    max_neighbors: int | None = None
+    graphify_mode: str | None = None
 
 
 class CompareRequest(ChatRequest):

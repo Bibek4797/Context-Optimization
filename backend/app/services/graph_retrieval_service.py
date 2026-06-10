@@ -268,16 +268,13 @@ class GraphRetrievalService:
             all_nodes = codegraph.nodes
             all_edges = codegraph.edges
 
-        # 1. Base limits mapping (Tight, Balanced, Deep selector)
+        # 1. Base limits mapping
         if max_nodes <= 8:
             base_anchors, base_neighbors = 2, 4
-            limit_chars = 500
         elif max_nodes <= 14:
             base_anchors, base_neighbors = 4, 8
-            limit_chars = 1000
         else:
             base_anchors, base_neighbors = 8, 16
-            limit_chars = 1500
 
         # Dynamically scale actual limits based on total nodes (N) in the active repository graph
         N = len(all_nodes)
@@ -291,31 +288,93 @@ class GraphRetrievalService:
             scale_factor = 3.0
 
         if max_anchors is not None:
-            max_anchors = max_anchors
+            actual_max_anchors = max_anchors
         else:
-            max_anchors = max(2, int(base_anchors * scale_factor))
+            actual_max_anchors = max(2, int(base_anchors * scale_factor))
 
         if max_neighbors is not None:
-            max_neighbors = max_neighbors
+            actual_max_neighbors = max_neighbors
         else:
-            max_neighbors = max(4, int(base_neighbors * scale_factor))
+            actual_max_neighbors = max(4, int(base_neighbors * scale_factor))
 
-        # 2. Run global PageRank centrality scoring
+        # 2. Run global PageRank centrality scoring (independent of query)
         pr_map = self._compute_pagerank(all_nodes, all_edges)
-        
-        # Calculate dynamic number of boosted PageRank hubs based on codebase size (~1% of codebase, capped between 5 and 30)
-        H = max(5, min(30, int(N * 0.01)))
-        
-        # Sort nodes by PageRank and assign decaying calibrated boosts (scaled to exact name match weight of +8.0)
         sorted_by_pr = sorted(all_nodes, key=lambda n: pr_map.get(n.node_id, 0.0), reverse=True)
-        pr_boost = {}
-        for index, node in enumerate(sorted_by_pr[:H]):
-            pr_boost[node.node_id] = 8.0 * (1.0 - (index / H))
-
-        # 3. Perform dynamic Light-to-Full checks on all nodes and score with Lightweight Keyword Matcher
-        terms = self._terms(query)
+        pr_ranks = {node.node_id: idx + 1 for idx, node in enumerate(sorted_by_pr)}
         
-        # Traceback Line Number Scorer: extract line numbers (e.g. 'line 25' or 'file.py:25' or 'L25')
+        pr_scores = {}
+        for node in all_nodes:
+            rank = pr_ranks[node.node_id]
+            pr_scores[node.node_id] = 10.0 * (1.0 - (rank - 1) / N) if N > 1 else 10.0
+
+        # Read every node's code snippet to build BM25 corpus
+        file_cache: dict[str, list[str]] = {}
+        node_codes: dict[str, str] = {}
+        for node in all_nodes:
+            node_codes[node.node_id] = self._read_node_code(repo_id, node, file_cache)
+
+        # 3. BM25 scoring (query-dependent)
+        query_terms = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query)]
+        corpus_tokens = {}
+        for node in all_nodes:
+            code = node_codes[node.node_id] or ""
+            corpus_tokens[node.node_id] = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", code)]
+            
+        doc_freqs = {}
+        for term in query_terms:
+            doc_freqs[term] = sum(1 for nid, tokens in corpus_tokens.items() if term in tokens)
+            
+        idfs = {}
+        for term in query_terms:
+            df = doc_freqs[term]
+            idfs[term] = math.log((N - df + 0.5) / (df + 0.5) + 1.0)
+            
+        total_len = sum(len(tokens) for tokens in corpus_tokens.values())
+        avg_doc_len = (total_len / N) if N > 0 else 1.0
+        if avg_doc_len == 0:
+            avg_doc_len = 1.0
+            
+        k1 = 1.5
+        b_param = 0.75
+        bm25_scores = {}
+        for node in all_nodes:
+            nid = node.node_id
+            tokens = corpus_tokens[nid]
+            doc_len = len(tokens)
+            
+            score = 0.0
+            t_counts = {}
+            for t in tokens:
+                if t in query_terms:
+                    t_counts[t] = t_counts.get(t, 0) + 1
+                    
+            for term in query_terms:
+                tf = t_counts.get(term, 0)
+                if tf > 0:
+                    idf = idfs[term]
+                    numerator = tf * (k1 + 1.0)
+                    denominator = tf + k1 * (1.0 - b_param + b_param * (doc_len / avg_doc_len))
+                    score += idf * (numerator / denominator)
+            bm25_scores[nid] = score
+
+        # 4. Edge Rank scoring (Degree Centrality, independent of query)
+        node_degrees = {node.node_id: 0 for node in all_nodes}
+        for edge in all_edges:
+            src, tgt = edge.source_node, edge.target_node
+            if src in node_degrees:
+                node_degrees[src] += 1
+            if tgt in node_degrees:
+                node_degrees[tgt] += 1
+                
+        sorted_by_degree = sorted(all_nodes, key=lambda n: node_degrees.get(n.node_id, 0), reverse=True)
+        edge_ranks = {node.node_id: idx + 1 for idx, node in enumerate(sorted_by_degree)}
+        
+        edge_scores = {}
+        for node in all_nodes:
+            rank = edge_ranks[node.node_id]
+            edge_scores[node.node_id] = 10.0 * (1.0 - (rank - 1) / N) if N > 1 else 10.0
+
+        # 5. Line matching rank (query-dependent)
         line_numbers = []
         for match in re.finditer(r"\bline\s+(\d+)\b|:(\d+)\b|\bL(\d+)\b", query, re.IGNORECASE):
             num = match.group(1) or match.group(2) or match.group(3)
@@ -325,138 +384,106 @@ class GraphRetrievalService:
                 except ValueError:
                     pass
 
-        # Per-query file reading cache
-        file_cache: dict[str, list[str]] = {}
-        node_codes: dict[str, str] = {}
-
-        node_scores = {}
+        line_scores = {}
         for node in all_nodes:
-            code = self._read_node_code(repo_id, node, file_cache)
-            node_codes[node.node_id] = code
-
-            # Lightweight Keyword Matcher:
-            keyword_score = 0.0
-            for term in terms:
-                # Add +10.0 if a term is found in node.label.lower()
-                if node.label and term in node.label.lower():
-                    keyword_score += 10.0
-                # Add +5.0 if a term is found in node.file_path.lower()
-                if node.file_path and term in node.file_path.lower():
-                    keyword_score += 5.0
-
-            # Add +0.2 if node.node_type is in {"function", "class", "method"}
-            structural_boost = 0.0
-            if node.node_type in {"function", "class", "method"}:
-                structural_boost = 0.2
-
-            # Line boundary matching: massive boost if a mentioned traceback line falls within this node's range
-            line_boost = 0.0
+            line_score = 0.0
             if node.file_path and node.line_start is not None and node.line_end is not None:
                 for line_num in line_numbers:
                     if node.line_start <= line_num <= node.line_end:
-                        line_boost += 15.0
+                        line_score += 15.0
+            line_scores[node.node_id] = line_score
 
-            node_scores[node.node_id] = keyword_score + structural_boost + line_boost + pr_boost.get(node.node_id, 0.0)
+        # 6. Combined Score
+        total_scores = {}
+        for node in all_nodes:
+            nid = node.node_id
+            total_scores[nid] = (
+                pr_scores[nid] +
+                bm25_scores[nid] +
+                edge_scores[nid] +
+                line_scores[nid]
+            )
 
-        # 4. Select top K Primary Anchors based on final scores
-        sorted_nodes = sorted(all_nodes, key=lambda n: node_scores.get(n.node_id, 0.0), reverse=True)
-        relevant_nodes = [node for node in sorted_nodes if node_scores.get(node.node_id, 0.0) > 0.0]
-        
-        if relevant_nodes:
-            anchors = relevant_nodes[:max_anchors]
-        else:
-            anchors = sorted_nodes[:max_anchors]
-            
+        # Select top K Primary Anchors
+        sorted_nodes = sorted(all_nodes, key=lambda n: total_scores.get(n.node_id, 0.0), reverse=True)
+        anchors = sorted_nodes[:actual_max_anchors]
         selected_anchors = {node.node_id: node for node in anchors}
 
-        # 5. Select top N Neighbor Nodes linked in the graph, ranked by score
-        adjacent_edges: list[GraphEdge] = []
-        neighbor_ids = set()
-        edge_by_neighbor = {}
-        for edge in all_edges:
-            if edge.source_node in selected_anchors or edge.target_node in selected_anchors:
-                adjacent_edges.append(edge)
-                other_id = edge.target_node if edge.source_node in selected_anchors else edge.source_node
-                if other_id not in selected_anchors:
-                    neighbor_ids.add(other_id)
-                    edge_by_neighbor[other_id] = edge.edge_type
-                    
+        # 7. Neighbor Selection per Anchor using Edge Rank (Degree)
+        selected_neighbors = {}
+        connections_info = []
         node_by_id = {node.node_id: node for node in all_nodes}
-        neighbor_nodes = [node_by_id[nid] for nid in neighbor_ids if nid in node_by_id]
         
-        # Rank neighbors by applying connection weights to their scores
-        neighbor_weighted_scores = {}
-        for node in neighbor_nodes:
-            edge_type = edge_by_neighbor.get(node.node_id, "imports")
-            if edge_type in {"calls", "triggers", "inherits", "extends"}:
-                w_edge = 1.5
-            elif edge_type in {"contains", "part_of"}:
-                w_edge = 1.2
-            else:
-                w_edge = 1.0 # imports, depends_on
-                
-            neighbor_weighted_scores[node.node_id] = node_scores.get(node.node_id, 0.0) * w_edge
+        for anchor_node in anchors:
+            anchor_id = anchor_node.node_id
+            anchor_edges = []
+            for edge in all_edges:
+                if edge.source_node == anchor_id or edge.target_node == anchor_id:
+                    neighbor_id = edge.target_node if edge.source_node == anchor_id else edge.source_node
+                    if neighbor_id != anchor_id and neighbor_id in node_by_id:
+                        anchor_edges.append((neighbor_id, edge.edge_type, edge))
+                        
+            # Sort neighbors of this anchor by their edge rank (degree)
+            sorted_neighbors = sorted(anchor_edges, key=lambda x: node_degrees.get(x[0], 0), reverse=True)
             
-        ranked_neighbors = sorted(neighbor_nodes, key=lambda n: neighbor_weighted_scores.get(n.node_id, 0.0), reverse=True)
-        selected_neighbors = {node.node_id: node for node in ranked_neighbors[:max_neighbors]}
+            # Select up to actual_max_neighbors for this anchor
+            for neighbor_id, edge_type, edge in sorted_neighbors[:actual_max_neighbors]:
+                if neighbor_id not in selected_anchors:
+                    selected_neighbors[neighbor_id] = node_by_id[neighbor_id]
+                    connections_info.append({
+                        "anchor": anchor_id,
+                        "neighbor": neighbor_id,
+                        "edge_type": edge_type,
+                        "edge": edge
+                    })
 
         # Combine nodes and select subset of edges
         selected_nodes = list(selected_anchors.values()) + list(selected_neighbors.values())
         selected_ids = {node.node_id for node in selected_nodes}
-        selected_edges = [
-            edge for edge in adjacent_edges if edge.source_node in selected_ids and edge.target_node in selected_ids
-        ]
+        
+        # Build selected edges
+        selected_edges_set = set()
+        for conn in connections_info:
+            selected_edges_set.add(conn["edge"])
+        for edge in all_edges:
+            if edge.source_node in selected_ids and edge.target_node in selected_ids:
+                selected_edges_set.add(edge)
+        selected_edges = list(selected_edges_set)
 
-        # 6. Extract snippets: Full snippets for primary anchors, smart truncated snippets for neighbors
+        # 8. Extract Full snippets for both anchors and neighbors
         snippets: list[SourceSnippet] = []
         seen_snippets = set()
         
-        # Anchors (Full context)
-        for node in selected_anchors.values():
+        for node in selected_nodes:
             code = node_codes.get(node.node_id)
             if code is None:
                 code = self._read_node_code(repo_id, node, file_cache)
+            node.source_snippet = code
+            
             if not node.file_path and node.node_type != "cli_output":
                 continue
             path = node.file_path or node.node_id
             key = (path, node.line_start, node.line_end)
             if key not in seen_snippets:
                 seen_snippets.add(key)
+                
+                role = "anchor" if node.node_id in selected_anchors else "neighbor"
                 snippets.append(
                     SourceSnippet(
                         file_path=path,
                         line_start=node.line_start or 1,
                         line_end=node.line_end or node.line_start or 1,
                         text=code,
-                        source="graph_anchor",
-                    )
-                )
-                
-        # Neighbors (Smart truncated signature context)
-        for node in selected_neighbors.values():
-            code = node_codes.get(node.node_id)
-            if code is None:
-                code = self._read_node_code(repo_id, node, file_cache)
-            if not node.file_path and node.node_type != "cli_output":
-                continue
-            path = node.file_path or node.node_id
-            key = (path, node.line_start, node.line_end)
-            if key not in seen_snippets:
-                seen_snippets.add(key)
-                
-                # Format snippet with dynamic budget limit + signature append
-                truncated_text = self._format_neighbor_snippet(code, limit_chars)
-                snippets.append(
-                    SourceSnippet(
-                        file_path=path,
-                        line_start=node.line_start or 1,
-                        line_end=node.line_end or node.line_start or 1,
-                        text=truncated_text,
-                        source="graph_neighbor",
+                        source=f"graph_{role}",
                     )
                 )
 
-        context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="advanced")
+        context = self._format_advanced_context(
+            anchors=list(selected_anchors.values()),
+            neighbors=list(selected_neighbors.values()),
+            connections=connections_info,
+            snippets=snippets
+        )
         measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
         
         return GraphRetrievalResult(
@@ -465,7 +492,7 @@ class GraphRetrievalService:
             selected_nodes=selected_nodes,
             selected_edges=selected_edges,
             token_measurement=measurement,
-            retrieval_strategy="Advanced Hybrid Scoring System",
+            retrieval_strategy="Advanced Hybrid Scoring System (BM25 + PageRank + EdgeRank + LineMatch)",
         )
     def _internal_retrieval(
         self, repo_id: str, query: str, max_nodes: int,
@@ -782,4 +809,38 @@ class GraphRetrievalService:
                 *snippet_lines,
             ]
         )
+
+    def _format_advanced_context(
+        self,
+        anchors: list[GraphNode],
+        neighbors: list[GraphNode],
+        connections: list[dict[str, str]],
+        snippets: list[SourceSnippet]
+    ) -> str:
+        lines = [
+            "### Retrieval Mode: Advanced Hybrid Engine (BM25 + PageRank + EdgeRank + LineMatch)",
+            "",
+            "Selected Anchor Nodes (ranked by query relevance + centrality):",
+        ]
+        for node in anchors:
+            lines.append(f"- [Anchor] {node.node_id} ({node.file_path or 'external'}:{node.line_start or '-'})")
+            
+        lines.append("")
+        lines.append("Selected Neighborhood Nodes:")
+        for node in neighbors:
+            lines.append(f"- [Neighbor] {node.node_id} ({node.file_path or 'external'}:{node.line_start or '-'})")
+            
+        lines.append("")
+        lines.append("Graph Connections between Anchors and Neighbors:")
+        for conn in connections:
+            lines.append(f"- Anchor '{conn['anchor']}' is connected to Neighbor '{conn['neighbor']}' via relationship '{conn['edge_type']}'")
+            
+        lines.append("")
+        lines.append("Source Code Snippets:")
+        for snippet in snippets:
+            lines.append(f"### File: {snippet.file_path} (Lines {snippet.line_start}-{snippet.line_end}) [{snippet.source}]")
+            lines.append(snippet.text)
+            lines.append("---")
+            
+        return "\n".join(lines)
 
