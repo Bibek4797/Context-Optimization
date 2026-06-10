@@ -1057,21 +1057,13 @@ def render_tokens(repo: RepoMetadata | None) -> None:
     # Collapsible Ingestion Pipeline Measurements
     summary = storage.load_token_summary(repo.repo_id)
     if summary:
-        with st.expander("🛠️ Static Ingestion & Parsing Pipeline Measurements (Raw Code & Graph Build)"):
-            st.markdown(
-                "These tokens represent the static sizes of the files and graphs during ingestion and parsing. "
-                "They are stored locally and are **not** sent to the LLM on every query."
+        if summary.cumulative_session_usage:
+            st.markdown("#### Cumulative Raw Stage Measurements")
+            st.dataframe(
+                [{"stage": key, "tokens": value} for key, value in summary.cumulative_session_usage.items()],
+                use_container_width=True,
+                hide_index=True,
             )
-            pipeline_rows = [measurement.model_dump() for measurement in summary.stages.values()]
-            st.dataframe(pipeline_rows, use_container_width=True, hide_index=True)
-            
-            if summary.cumulative_session_usage:
-                st.markdown("#### Cumulative Raw Stage Measurements")
-                st.dataframe(
-                    [{"stage": key, "tokens": value} for key, value in summary.cumulative_session_usage.items()],
-                    use_container_width=True,
-                    hide_index=True,
-                )
 
 
 def parse_and_render_code_fix(answer_text: str, repo_id: str) -> None:
