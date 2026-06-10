@@ -937,13 +937,7 @@ def render_graph(repo: RepoMetadata | None, kind: str) -> None:
         st.info(
             "Native Graphify output is not available in this environment. This tab is showing the saved Graphify adapter output plus a clearly labeled fallback graph derived from CodeGraph."
         )
-    cols = st.columns(3)
-    cols[0].metric("Source", graph.source)
-    cols[1].metric("Nodes", len(graph.nodes))
-    cols[2].metric("Edges", len(graph.edges))
-    st.graphviz_chart(cached_get_graph_dot(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True)
-    
-    # Download Interactive HTML Graph option
+    # Download Interactive HTML Graph option (Placed at the top)
     try:
         html_content = generate_interactive_html_graph(graph, kind)
         st.download_button(
@@ -955,6 +949,12 @@ def render_graph(repo: RepoMetadata | None, kind: str) -> None:
         )
     except Exception as e:
         st.caption(f"Could not generate downloadable HTML graph: {e}")
+
+    cols = st.columns(3)
+    cols[0].metric("Source", graph.source)
+    cols[1].metric("Nodes", len(graph.nodes))
+    cols[2].metric("Edges", len(graph.edges))
+    st.graphviz_chart(cached_get_graph_dot(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True)
 
     with st.expander("Nodes"):
         st.dataframe(cached_get_graph_nodes_df(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True, hide_index=True)
