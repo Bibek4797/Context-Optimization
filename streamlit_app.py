@@ -138,11 +138,27 @@ storage, pipeline, repo_service, chat_service, llm_provider = services()
 
 @st.cache_resource(show_spinner=False)
 def cached_load_codegraph(repo_id: str, updated_at: str) -> GraphDocument | None:
-    return storage.load_codegraph(repo_id)
+    graph = storage.load_codegraph(repo_id)
+    if graph:
+        from app.services.graph_retrieval_service import GraphRetrievalService
+        from app.core.dependencies import token_service
+        retrieval_service = GraphRetrievalService(storage, token_service)
+        file_cache = {}
+        for node in graph.nodes:
+            node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache)
+    return graph
 
 @st.cache_resource(show_spinner=False)
 def cached_load_graphify(repo_id: str, updated_at: str) -> GraphDocument | None:
-    return storage.load_graphify(repo_id)
+    graph = storage.load_graphify(repo_id)
+    if graph:
+        from app.services.graph_retrieval_service import GraphRetrievalService
+        from app.core.dependencies import token_service
+        retrieval_service = GraphRetrievalService(storage, token_service)
+        file_cache = {}
+        for node in graph.nodes:
+            node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache)
+    return graph
 
 @st.cache_data(show_spinner=False)
 def cached_load_files_df(repo_id: str, updated_at: str) -> list[dict]:
@@ -151,21 +167,21 @@ def cached_load_files_df(repo_id: str, updated_at: str) -> list[dict]:
 
 @st.cache_data(show_spinner=False)
 def cached_get_graph_dot(repo_id: str, kind: str, updated_at: str, max_nodes: int = 80, max_edges: int = 160) -> str:
-    graph = storage.load_codegraph(repo_id) if kind == "codegraph" else storage.load_graphify(repo_id)
+    graph = cached_load_codegraph(repo_id, updated_at) if kind == "codegraph" else cached_load_graphify(repo_id, updated_at)
     if not graph:
         return ""
     return graph_to_dot(graph, max_nodes=max_nodes, max_edges=max_edges)
 
 @st.cache_data(show_spinner=False)
 def cached_get_graph_nodes_df(repo_id: str, kind: str, updated_at: str) -> list[dict]:
-    graph = storage.load_codegraph(repo_id) if kind == "codegraph" else storage.load_graphify(repo_id)
+    graph = cached_load_codegraph(repo_id, updated_at) if kind == "codegraph" else cached_load_graphify(repo_id, updated_at)
     if not graph:
         return []
     return [node.model_dump() for node in graph.nodes]
 
 @st.cache_data(show_spinner=False)
 def cached_get_graph_edges_df(repo_id: str, kind: str, updated_at: str) -> list[dict]:
-    graph = storage.load_codegraph(repo_id) if kind == "codegraph" else storage.load_graphify(repo_id)
+    graph = cached_load_codegraph(repo_id, updated_at) if kind == "codegraph" else cached_load_graphify(repo_id, updated_at)
     if not graph:
         return []
     return [edge.model_dump() for edge in graph.edges]
@@ -626,7 +642,8 @@ def generate_interactive_html_graph(graph, kind: str) -> str:
             "id": node.node_id,
             "label": node.label,
             "type": node.node_type,
-            "file_path": node.file_path
+            "file_path": node.file_path,
+            "source_snippet": node.source_snippet
         })
     links = []
     for edge in graph.edges:
@@ -865,6 +882,13 @@ def generate_interactive_html_graph(graph, kind: str) -> str:
                 let tooltipContent = "<strong>ID:</strong> " + d.id + "<br/><strong>Type:</strong> " + d.type;
                 if (d.file_path) {{
                     tooltipContent += "<br/><strong>File:</strong> " + d.file_path;
+                }}
+                if (d.source_snippet) {{
+                    let escaped = d.source_snippet
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;");
+                    tooltipContent += "<br/><strong>Code Snippet:</strong><pre style='margin: 4px 0 0 0; background: #161b22; padding: 6px; border-radius: 4px; border: 1px solid #30363d; font-size: 10px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; text-align: left;'>" + escaped + "</pre>";
                 }}
                 tooltip.style("display", "block").html(tooltipContent);
                 d3.select(this).attr("r", d.type === "file" || d.type === "module" ? 14 : 12);
