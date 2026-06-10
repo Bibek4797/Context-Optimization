@@ -618,6 +618,308 @@ def render_graph_schematic(kind: str) -> None:
             )
 
 
+def generate_interactive_html_graph(graph, kind: str) -> str:
+    import json
+    nodes = []
+    for node in graph.nodes:
+        nodes.append({
+            "id": node.node_id,
+            "label": node.label,
+            "type": node.node_type,
+            "file_path": node.file_path
+        })
+    links = []
+    for edge in graph.edges:
+        links.append({
+            "source": edge.source_node,
+            "target": edge.target_node,
+            "type": edge.edge_type,
+            "score": edge.score
+        })
+    
+    data_json = json.dumps({"nodes": nodes, "links": links})
+    
+    title_str = "CodeGraph Explorer" if kind == "codegraph" else "Graphify Explorer"
+    subtitle_str = "Full Repository Dependency and Call Hierarchy Graph" if kind == "codegraph" else "Macro-Level High-Level Architectural Flow Graph"
+    
+    template = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Interactive {title_str}</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {{
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            overflow: hidden;
+        }}
+        #canvas {{
+            width: 100vw;
+            height: 100vh;
+        }}
+        .node {{
+            stroke: #21262d;
+            stroke-width: 2px;
+            cursor: pointer;
+            transition: r 0.2s, stroke-width 0.2s;
+        }}
+        .node:hover {{
+            stroke: #8b949e;
+            stroke-width: 3px;
+        }}
+        .node text {{
+            fill: #c9d1d9;
+            font-size: 11px;
+            font-family: monospace;
+            pointer-events: none;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+        }}
+        .link {{
+            stroke: #30363d;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+            fill: none;
+        }}
+        #tooltip {{
+            position: absolute;
+            background: rgba(22, 27, 34, 0.95);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px;
+            color: #c9d1d9;
+            font-size: 13px;
+            pointer-events: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+            display: none;
+            font-family: monospace;
+            z-index: 100;
+        }}
+        .header {{
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(22, 27, 34, 0.85);
+            padding: 15px 20px;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+            backdrop-filter: blur(8px);
+            pointer-events: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }}
+        .header h3 {{ margin: 0 0 5px 0; color: #58a6ff; font-size: 18px; }}
+        .header p {{ margin: 0; font-size: 12px; color: #8b949e; }}
+        .controls {{
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(22, 27, 34, 0.85);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }}
+        button {{
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s, border-color 0.2s;
+        }}
+        button:hover {{
+            background: #30363d;
+            border-color: #8b949e;
+        }}
+        .legend {{
+            margin-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            font-size: 11px;
+        }}
+        .legend-item {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .legend-color {{
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 1px solid #fff;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h3>🌲 {title_str}</h3>
+        <p>{subtitle_str}</p>
+        <div class="legend">
+            <div class="legend-item"><div class="legend-color" style="background-color: #4cf07b"></div> File / Module</div>
+            <div class="legend-item"><div class="legend-color" style="background-color: #58a6ff"></div> Class / Component</div>
+            <div class="legend-item"><div class="legend-color" style="background-color: #ff7b72"></div> Function / Concept</div>
+            <div class="legend-item"><div class="legend-color" style="background-color: #d2a8ff"></div> Method</div>
+            <div class="legend-item"><div class="legend-color" style="background-color: #8b949e"></div> External / Other</div>
+        </div>
+    </div>
+    <svg id="canvas"></svg>
+    <div id="tooltip"></div>
+    <div class="controls">
+        <button id="reset-btn">Reset Zoom</button>
+        <button id="pause-btn">Pause Physics</button>
+    </div>
+
+    <script>
+        const graphData = {data_json};
+
+        const svg = d3.select("#canvas");
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        svg.attr("width", width).attr("height", height);
+
+        const container = svg.append("g");
+
+        // Zoom & Pan
+        const zoom = d3.zoom()
+            .scaleExtent([0.05, 10])
+            .on("zoom", (event) => {{
+                container.attr("transform", event.transform);
+            }});
+        svg.call(zoom);
+
+        document.getElementById("reset-btn").addEventListener("click", () => {{
+            svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+        }});
+
+        // Color coding
+        const colors = {{
+            "file": "#4cf07b",
+            "module": "#4cf07b",
+            "component": "#58a6ff",
+            "class": "#58a6ff",
+            "concept": "#ff7b72",
+            "function": "#ff7b72",
+            "method": "#d2a8ff",
+            "external": "#8b949e"
+        }};
+        const get_color = (type) => colors[type] || "#bc8cff";
+
+        // Links
+        const link = container.append("g")
+            .selectAll("line")
+            .data(graphData.links)
+            .enter().append("line")
+            .attr("class", "link");
+
+        // Nodes Group
+        const node = container.append("g")
+            .selectAll(".node-group")
+            .data(graphData.nodes)
+            .enter().append("g")
+            .attr("class", "node-group")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        node.append("circle")
+            .attr("class", "node")
+            .attr("r", d => d.type === "file" || d.type === "module" ? 10 : 8)
+            .attr("fill", d => get_color(d.type));
+
+        node.append("text")
+            .attr("dx", 12)
+            .attr("dy", ".35em")
+            .text(d => d.label || d.id);
+
+        // Force Simulation
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.links).id(d => d.id).distance(120))
+            .force("charge", d3.forceManyBody().strength(-300))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collision", d3.forceCollide().radius(25));
+
+        simulation.on("tick", () => {{
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            node
+                .attr("transform", d => "translate(" + d.x + "," + d.y + ")");
+        }});
+
+        // Tooltip interaction
+        const tooltip = d3.select("#tooltip");
+        node.selectAll("circle")
+            .on("mouseover", function(event, d) {{
+                let tooltipContent = "<strong>ID:</strong> " + d.id + "<br/><strong>Type:</strong> " + d.type;
+                if (d.file_path) {{
+                    tooltipContent += "<br/><strong>File:</strong> " + d.file_path;
+                }}
+                tooltip.style("display", "block").html(tooltipContent);
+                d3.select(this).attr("r", d.type === "file" || d.type === "module" ? 14 : 12);
+            }})
+            .on("mousemove", function(event) {{
+                tooltip.style("left", (event.pageX + 15) + "px")
+                       .style("top", (event.pageY - 15) + "px");
+            }})
+            .on("mouseout", function(event, d) {{
+                tooltip.style("display", "none");
+                d3.select(this).attr("r", d.type === "file" || d.type === "module" ? 10 : 8);
+            }});
+
+        // Controls
+        let physicsPaused = false;
+        document.getElementById("pause-btn").addEventListener("click", () => {{
+            if (physicsPaused) {{
+                simulation.alpha(0.3).restart();
+                document.getElementById("pause-btn").innerText = "Pause Physics";
+            }} else {{
+                simulation.stop();
+                document.getElementById("pause-btn").innerText = "Resume Physics";
+            }}
+            physicsPaused = !physicsPaused;
+        }});
+
+        function dragstarted(event, d) {{
+            if (!event.active && !physicsPaused) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }}
+
+        function dragged(event, d) {{
+            d.fx = event.x;
+            d.fy = event.y;
+        }}
+
+        function dragended(event, d) {{
+            if (!event.active && !physicsPaused) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }}
+
+        window.addEventListener("resize", () => {{
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            svg.attr("width", w).attr("height", h);
+            if (!physicsPaused) simulation.force("center", d3.forceCenter(w / 2, h / 2)).restart();
+        }});
+    </script>
+</body>
+</html>"""
+    return template
+
+
 def render_graph(repo: RepoMetadata | None, kind: str) -> None:
     title = "CodeGraph Explorer" if kind == "codegraph" else "Graphify Explorer"
     st.header(title)
@@ -640,6 +942,20 @@ def render_graph(repo: RepoMetadata | None, kind: str) -> None:
     cols[1].metric("Nodes", len(graph.nodes))
     cols[2].metric("Edges", len(graph.edges))
     st.graphviz_chart(cached_get_graph_dot(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True)
+    
+    # Download Interactive HTML Graph option
+    try:
+        html_content = generate_interactive_html_graph(graph, kind)
+        st.download_button(
+            label=f"📥 Download Interactive {title} HTML",
+            data=html_content,
+            file_name=f"{kind}_graph_{repo.repo_id[:8]}.html",
+            mime="text/html",
+            key=f"download_html_{kind}"
+        )
+    except Exception as e:
+        st.caption(f"Could not generate downloadable HTML graph: {e}")
+
     with st.expander("Nodes"):
         st.dataframe(cached_get_graph_nodes_df(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True, hide_index=True)
     with st.expander("Edges"):
