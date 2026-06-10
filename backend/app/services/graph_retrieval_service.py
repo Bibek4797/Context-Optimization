@@ -442,13 +442,14 @@ class GraphRetrievalService:
         selected_ids = {node.node_id for node in selected_nodes}
         
         # Build selected edges
-        selected_edges_set = set()
+        selected_edges_dict = {}
         for conn in connections_info:
-            selected_edges_set.add(conn["edge"])
+            edge = conn["edge"]
+            selected_edges_dict[edge.edge_id] = edge
         for edge in all_edges:
             if edge.source_node in selected_ids and edge.target_node in selected_ids:
-                selected_edges_set.add(edge)
-        selected_edges = list(selected_edges_set)
+                selected_edges_dict[edge.edge_id] = edge
+        selected_edges = list(selected_edges_dict.values())
 
         # 8. Extract Full snippets for both anchors and neighbors
         snippets: list[SourceSnippet] = []
