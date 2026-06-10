@@ -7,7 +7,7 @@ from app.models.schemas import GraphDocument, GraphEdge, GraphNode
 
 
 class GraphifyService:
-    def __init__(self, storage: Any) -> None:
+    def __init__(self, storage: Any, *args: Any, **kwargs: Any) -> None:
         self.storage = storage
 
 

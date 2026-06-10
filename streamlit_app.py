@@ -138,31 +138,45 @@ storage, pipeline, repo_service, chat_service, llm_provider = services()
 
 @st.cache_resource(show_spinner=False)
 def cached_load_codegraph(repo_id: str, updated_at: str) -> GraphDocument | None:
-    graph = storage.load_codegraph(repo_id)
-    if graph:
-        from app.services.graph_retrieval_service import GraphRetrievalService
-        from app.core.dependencies import token_service
-        retrieval_service = GraphRetrievalService(storage, token_service)
-        file_cache = {}
-        for node in graph.nodes:
-            node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache)
-    return graph
+    try:
+        graph = storage.load_codegraph(repo_id)
+        if graph:
+            from app.services.graph_retrieval_service import GraphRetrievalService
+            from app.services.token_service import TokenService
+            retrieval_service = GraphRetrievalService(storage, TokenService())
+            file_cache = {}
+            for node in graph.nodes:
+                node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache)
+        return graph
+    except Exception:
+        try:
+            return storage.load_codegraph(repo_id)
+        except Exception:
+            return None
 
 @st.cache_resource(show_spinner=False)
 def cached_load_graphify(repo_id: str, updated_at: str) -> GraphDocument | None:
-    graph = storage.load_graphify(repo_id)
-    if graph:
-        from app.services.graph_retrieval_service import GraphRetrievalService
-        from app.core.dependencies import token_service
-        retrieval_service = GraphRetrievalService(storage, token_service)
-        file_cache = {}
-        for node in graph.nodes:
-            node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache)
-    return graph
+    try:
+        graph = storage.load_graphify(repo_id)
+        if graph:
+            from app.services.graph_retrieval_service import GraphRetrievalService
+            from app.services.token_service import TokenService
+            retrieval_service = GraphRetrievalService(storage, TokenService())
+            file_cache = {}
+            for node in graph.nodes:
+                node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache)
+        return graph
+    except Exception:
+        try:
+            return storage.load_graphify(repo_id)
+        except Exception:
+            return None
 
 @st.cache_data(show_spinner=False)
 def cached_load_files_df(repo_id: str, updated_at: str) -> list[dict]:
     files = storage.load_files(repo_id)
+    if not files:
+        return []
     return [file.model_dump() for file in files]
 
 @st.cache_data(show_spinner=False)

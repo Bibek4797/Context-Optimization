@@ -165,36 +165,39 @@ class GraphRetrievalService:
         return pr
 
     def _read_node_code(self, repo_id: str, node: GraphNode, file_cache: dict[str, list[str]]) -> str:
-        if node.node_type == "cli_output" or not node.file_path:
-            return node.source_snippet or ""
-        
-        repo_root = self.storage.repo_source_dir(repo_id)
-        abs_path = str((repo_root / node.file_path).resolve())
-        
-        if abs_path not in file_cache:
-            try:
-                from app.services.file_utils import read_text_lossy
-                text = read_text_lossy(Path(abs_path))
-                file_cache[abs_path] = text.splitlines()
-            except Exception:
-                file_cache[abs_path] = []
-        
-        lines = file_cache[abs_path]
-        if not lines:
-            return node.source_snippet or ""
-        
-        # line_start and line_end are 1-based indices
-        start = (node.line_start or 1) - 1
-        end = (node.line_end or node.line_start or 1)
-        
-        # Ensure indices are within bounds
-        start = max(0, min(start, len(lines)))
-        end = max(0, min(end, len(lines)))
-        
-        if start >= end:
-            return ""
+        try:
+            if node.node_type == "cli_output" or not node.file_path:
+                return node.source_snippet or ""
             
-        return "\n".join(lines[start:end])
+            repo_root = self.storage.repo_source_dir(repo_id)
+            abs_path = str((repo_root / node.file_path).resolve())
+            
+            if abs_path not in file_cache:
+                try:
+                    from app.services.file_utils import read_text_lossy
+                    text = read_text_lossy(Path(abs_path))
+                    file_cache[abs_path] = text.splitlines()
+                except Exception:
+                    file_cache[abs_path] = []
+            
+            lines = file_cache[abs_path]
+            if not lines:
+                return node.source_snippet or ""
+            
+            # line_start and line_end are 1-based indices
+            start = (node.line_start or 1) - 1
+            end = (node.line_end or node.line_start or 1)
+            
+            # Ensure indices are within bounds
+            start = max(0, min(start, len(lines)))
+            end = max(0, min(end, len(lines)))
+            
+            if start >= end:
+                return ""
+                
+            return "\n".join(lines[start:end])
+        except Exception:
+            return node.source_snippet or ""
 
     def _extract_node_signature(self, node: GraphNode, code: str) -> str:
         # Signature is lightweight: node name, type, and the first few lines of its code (if present)

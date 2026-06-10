@@ -19,7 +19,6 @@ tree_sitter_service = TreeSitterService()
 codegraph_service = CodeGraphService()
 graphify_service = GraphifyService(
     storage=storage,
-    timeout_seconds=settings.graphify_timeout_seconds,
 )
 analysis_pipeline = AnalysisPipeline(
     storage=storage,
