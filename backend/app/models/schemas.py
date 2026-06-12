@@ -29,6 +29,7 @@ class RepoStats(BaseModel):
     python_files: int = 0
     total_lines: int = 0
     python_lines: int = 0
+    total_tokens: int = 0
 
 
 class RepoMetadata(BaseModel):

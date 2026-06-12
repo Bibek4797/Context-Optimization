@@ -146,7 +146,7 @@ def cached_load_codegraph(repo_id: str, updated_at: str) -> GraphDocument | None
             retrieval_service = GraphRetrievalService(storage, TokenService())
             file_cache = {}
             for node in graph.nodes:
-                node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache)
+                node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache, max_chars=1000)
         return graph
     except Exception:
         try:
@@ -164,7 +164,7 @@ def cached_load_graphify(repo_id: str, updated_at: str) -> GraphDocument | None:
             retrieval_service = GraphRetrievalService(storage, TokenService())
             file_cache = {}
             for node in graph.nodes:
-                node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache)
+                node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache, max_chars=1000)
         return graph
     except Exception:
         try:

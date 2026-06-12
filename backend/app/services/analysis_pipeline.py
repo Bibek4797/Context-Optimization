@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from app.models.schemas import RepoMetadata, RepoStatus, RepoStats
+from app.models.schemas import RepoMetadata, RepoStatus, RepoStats, RepoFile
 from app.services.codegraph_service import CodeGraphService
 from app.services.file_utils import is_ignored, iter_python_files, read_text_lossy
 from app.services.graphify_service import GraphifyService
@@ -103,7 +103,7 @@ class AnalysisPipeline:
             self.storage.append_log(repo_id, "pipeline", "error", str(exc))
             return metadata
 
-    def _stats(self, source_dir: Path, files: list) -> RepoStats:
+    def _stats(self, source_dir: Path, files: list[RepoFile]) -> RepoStats:
         total_files = 0
         total_lines = 0
         for path in source_dir.rglob("*"):
@@ -115,9 +115,14 @@ class AnalysisPipeline:
                 if path.suffix in {".py", ".pyi", ".txt", ".md", ".toml", ".yaml", ".yml", ".json"}:
                     total_lines += len(read_text_lossy(path).splitlines())
         python_lines = sum(file.line_count for file in files)
+        total_tokens = sum(
+            self.token_service.estimate_tokens(read_text_lossy(source_dir / file.path))
+            for file in files
+        )
         return RepoStats(
             total_files=total_files,
             python_files=len(files),
             total_lines=total_lines,
             python_lines=python_lines,
+            total_tokens=total_tokens,
         )

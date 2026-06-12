@@ -192,6 +192,11 @@ class ChatService:
         )
 
     def _get_total_repo_tokens(self, repo_id: str) -> int:
+        meta = self.storage.load_repo_metadata(repo_id)
+        if meta and meta.stats:
+            if hasattr(meta.stats, "total_tokens") and meta.stats.total_tokens > 0:
+                return meta.stats.total_tokens
+
         from app.services.file_utils import read_text_lossy
         repo_root = self.storage.repo_source_dir(repo_id)
         if not repo_root.exists():

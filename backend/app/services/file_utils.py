@@ -28,6 +28,17 @@ IGNORED_DIRS = {
     ".next",
 }
 
+IGNORED_FILES = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    "go.sum",
+    "poetry.lock",
+    "mix.lock",
+    "composer.lock",
+}
+
 
 def clean_repo_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip(".-")
@@ -49,6 +60,8 @@ def source_snippet(text: str, line_start: int, line_end: int, max_chars: int | N
 
 
 def is_ignored(path: Path) -> bool:
+    if path.name in IGNORED_FILES:
+        return True
     return any(part in IGNORED_DIRS for part in path.parts)
 
 

@@ -164,13 +164,17 @@ class GraphRetrievalService:
             
         return pr
 
-    def _read_node_code(self, repo_id: str, node: GraphNode, file_cache: dict[str, list[str]]) -> str:
+    def _read_node_code(self, repo_id: str, node: GraphNode, file_cache: dict[str, list[str]], max_chars: int | None = None) -> str:
         try:
             if node.node_type == "cli_output" or not node.file_path:
-                return node.source_snippet or ""
+                snippet = node.source_snippet or ""
+                if max_chars is not None and len(snippet) > max_chars:
+                    return snippet[:max_chars] + "\n... [Snippet Truncated] ..."
+                return snippet
             
+            import os
             repo_root = self.storage.repo_source_dir(repo_id)
-            abs_path = str((repo_root / node.file_path).resolve())
+            abs_path = os.path.normpath(str(repo_root / node.file_path))
             
             if abs_path not in file_cache:
                 try:
@@ -182,7 +186,10 @@ class GraphRetrievalService:
             
             lines = file_cache[abs_path]
             if not lines:
-                return node.source_snippet or ""
+                snippet = node.source_snippet or ""
+                if max_chars is not None and len(snippet) > max_chars:
+                    return snippet[:max_chars] + "\n... [Snippet Truncated] ..."
+                return snippet
             
             # line_start and line_end are 1-based indices
             start = (node.line_start or 1) - 1
@@ -195,9 +202,15 @@ class GraphRetrievalService:
             if start >= end:
                 return ""
                 
-            return "\n".join(lines[start:end])
+            code = "\n".join(lines[start:end])
+            if max_chars is not None and len(code) > max_chars:
+                return code[:max_chars] + "\n... [Snippet Truncated] ..."
+            return code
         except Exception:
-            return node.source_snippet or ""
+            snippet = node.source_snippet or ""
+            if max_chars is not None and len(snippet) > max_chars:
+                return snippet[:max_chars] + "\n... [Snippet Truncated] ..."
+            return snippet
 
     def _extract_node_signature(self, node: GraphNode, code: str) -> str:
         # Signature is lightweight: node name, type, and the first few lines of its code (if present)
@@ -310,29 +323,52 @@ class GraphRetrievalService:
             rank = pr_ranks[node.node_id]
             pr_scores[node.node_id] = 10.0 * (1.0 - (rank - 1) / N) if N > 1 else 10.0
 
-        # Read every node's code snippet to build BM25 corpus
+        # Read every node's code snippet to build BM25 corpus (truncate to 2000 chars to save memory/CPU)
         file_cache: dict[str, list[str]] = {}
         node_codes: dict[str, str] = {}
         for node in all_nodes:
-            node_codes[node.node_id] = self._read_node_code(repo_id, node, file_cache)
+            node_codes[node.node_id] = self._read_node_code(repo_id, node, file_cache, max_chars=2000)
 
         # 3. BM25 scoring (query-dependent)
-        query_terms = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query)]
+        query_terms = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query) if len(t) > 1]
+        
+        # Calculate document frequencies for terms and fast document lengths
+        doc_freqs = {term: 0 for term in query_terms}
         corpus_tokens = {}
+        doc_lens = {}
+        total_len = 0
+        
         for node in all_nodes:
-            code = node_codes[node.node_id] or ""
-            corpus_tokens[node.node_id] = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", code)]
+            nid = node.node_id
+            code = node_codes[nid]
+            if not code:
+                doc_lens[nid] = 0
+                continue
             
-        doc_freqs = {}
-        for term in query_terms:
-            doc_freqs[term] = sum(1 for nid, tokens in corpus_tokens.items() if term in tokens)
+            # Fast document length estimation
+            d_len = len(code.split())
+            doc_lens[nid] = d_len
+            total_len += d_len
+            
+            # Optimization: Skip regex tokenization if no query term matches the code snippet as a substring
+            code_lower = code.lower()
+            matched_terms = [term for term in query_terms if term in code_lower]
+            if not matched_terms:
+                continue
+                
+            # Tokenize only nodes with substring matches
+            tokens = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", code)]
+            actual_matches = [term for term in matched_terms if term in tokens]
+            if actual_matches:
+                corpus_tokens[nid] = tokens
+                for term in actual_matches:
+                    doc_freqs[term] += 1
             
         idfs = {}
         for term in query_terms:
             df = doc_freqs[term]
             idfs[term] = math.log((N - df + 0.5) / (df + 0.5) + 1.0)
             
-        total_len = sum(len(tokens) for tokens in corpus_tokens.values())
         avg_doc_len = (total_len / N) if N > 0 else 1.0
         if avg_doc_len == 0:
             avg_doc_len = 1.0
@@ -342,22 +378,25 @@ class GraphRetrievalService:
         bm25_scores = {}
         for node in all_nodes:
             nid = node.node_id
-            tokens = corpus_tokens[nid]
-            doc_len = len(tokens)
-            
             score = 0.0
-            t_counts = {}
-            for t in tokens:
-                if t in query_terms:
-                    t_counts[t] = t_counts.get(t, 0) + 1
-                    
-            for term in query_terms:
-                tf = t_counts.get(term, 0)
-                if tf > 0:
-                    idf = idfs[term]
-                    numerator = tf * (k1 + 1.0)
-                    denominator = tf + k1 * (1.0 - b_param + b_param * (doc_len / avg_doc_len))
-                    score += idf * (numerator / denominator)
+            
+            # BM25 is only > 0 if the node was tokenized and had matches
+            if nid in corpus_tokens:
+                tokens = corpus_tokens[nid]
+                doc_len = doc_lens[nid]
+                t_counts = {}
+                for t in tokens:
+                    if t in query_terms:
+                        t_counts[t] = t_counts.get(t, 0) + 1
+                        
+                for term in query_terms:
+                    tf = t_counts.get(term, 0)
+                    if tf > 0:
+                        idf = idfs[term]
+                        numerator = tf * (k1 + 1.0)
+                        denominator = tf + k1 * (1.0 - b_param + b_param * (doc_len / avg_doc_len))
+                        score += idf * (numerator / denominator)
+                        
             bm25_scores[nid] = score
 
         # 4. Edge Rank scoring (Degree Centrality, independent of query)
