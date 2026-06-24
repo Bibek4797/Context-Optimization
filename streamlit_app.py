@@ -394,47 +394,37 @@ def render_upload_import(repo: RepoMetadata | None) -> None:
         "go", "rs", "java", "c", "cpp", "cc", "cxx", "h", "hpp",
     ]
 
-    # ── Section 1: Upload individual code files ──
-    st.subheader("📄 Upload Code Files")
-    st.caption("Upload one or more individual source files directly — no zipping needed.")
-    uploaded_files = st.file_uploader(
-        "Choose source files",
-        type=SUPPORTED_EXTENSIONS,
-        accept_multiple_files=True,
-        key="file_uploader",
-    )
-    if st.button("Analyze files", disabled=not uploaded_files, type="primary"):
-        with st.spinner("Analyzing uploaded files..."):
-            try:
-                new_repo = ingest_uploaded_files(uploaded_files)
-                set_repo(new_repo)
-                st.success(f"Loaded {new_repo.name} ({len(uploaded_files)} file{'s' if len(uploaded_files) != 1 else ''})")
-                st.rerun()
-            except Exception as exc:
-                st.error(str(exc))
-
-    st.markdown("---")
-
-    # ── Section 2: Upload repo (zip or GitHub) ──
-    st.subheader("📦 Upload Repository")
     left, right = st.columns(2)
     with left:
-        st.markdown("**Upload zipped codebase**")
-        uploaded_zip = st.file_uploader("Choose .zip file", type=["zip"], key="zip_uploader")
-        if st.button("Analyze zip", disabled=uploaded_zip is None, type="primary"):
-            with st.spinner("Extracting and analyzing repository..."):
+        st.subheader("📤 Upload Codebase")
+        st.caption("Upload a `.zip` repository archive or individual source files directly.")
+        uploaded_files = st.file_uploader(
+            "Choose files or .zip archive",
+            type=SUPPORTED_EXTENSIONS + ["zip"],
+            accept_multiple_files=True,
+            key="unified_uploader",
+        )
+        if st.button("Analyze Uploaded Codebase", disabled=not uploaded_files, type="primary"):
+            with st.spinner("Analyzing codebase..."):
                 try:
-                    new_repo = ingest_uploaded_zip(uploaded_zip)
+                    # Check if there is a zip file in the uploaded files
+                    zip_files = [f for f in uploaded_files if f.name.lower().endswith(".zip")]
+                    if zip_files:
+                        new_repo = ingest_uploaded_zip(zip_files[0])
+                        st.success(f"Loaded ZIP repository: {new_repo.name}")
+                    else:
+                        new_repo = ingest_uploaded_files(uploaded_files)
+                        st.success(f"Loaded {new_repo.name} ({len(uploaded_files)} file{'s' if len(uploaded_files) != 1 else ''})")
                     set_repo(new_repo)
-                    st.success(f"Loaded {new_repo.name}")
                     st.rerun()
                 except Exception as exc:
                     st.error(str(exc))
 
     with right:
-        st.markdown("**Import GitHub URL**")
+        st.subheader("🔗 Import GitHub URL")
+        st.caption("Clone and analyze a public Git repository directly from GitHub.")
         github_url = st.text_input("Repository URL", placeholder="https://github.com/owner/repo")
-        if st.button("Clone and analyze", disabled=not github_url.strip()):
+        if st.button("Clone and analyze", disabled=not github_url.strip(), type="primary"):
             with st.spinner("Cloning and analyzing repository..."):
                 try:
                     new_repo = repo_service.import_github(github_url.strip())
