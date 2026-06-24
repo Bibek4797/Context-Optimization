@@ -580,7 +580,10 @@ def render_tree_sitter(repo: RepoMetadata | None) -> None:
             dot, truncated = tree_to_dot(document.root, max_depth=max_depth, max_nodes=min(max_nodes, 220))
             if truncated:
                 st.info("Graph view is truncated by the depth/node controls to keep the page responsive.")
-            st.graphviz_chart(dot, use_container_width=True)
+            try:
+                st.graphviz_chart(dot, use_container_width=True)
+            except Exception:
+                st.info("ℹ️ Parse tree graph cannot be visualized because Graphviz is not installed locally.")
     with right:
         st.subheader("Source Span")
         if document.root:
@@ -1075,7 +1078,12 @@ def render_graph(repo: RepoMetadata | None, kind: str) -> None:
     cols[0].metric("Source", graph.source)
     cols[1].metric("Nodes", len(graph.nodes))
     cols[2].metric("Edges", len(graph.edges))
-    st.graphviz_chart(cached_get_graph_dot(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True)
+    try:
+        dot_code = cached_get_graph_dot(repo.repo_id, kind, str(repo.updated_at))
+        if dot_code:
+            st.graphviz_chart(dot_code, use_container_width=True)
+    except Exception:
+        st.info("ℹ️ Visual graph chart cannot be rendered because Graphviz is not installed locally. Please download the interactive HTML version above to view the graph dynamically!")
 
     with st.expander("Nodes"):
         st.dataframe(cached_get_graph_nodes_df(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True, hide_index=True)
@@ -1271,7 +1279,13 @@ def parse_and_render_code_fix(answer_text: str, repo_id: str) -> None:
 
 def render_query_record(record: QueryRecord) -> None:
     if record.error:
-        st.error(record.error)
+        st.error(f"❌ LLM Query Failed: {record.error}")
+        if "400" in record.error or "bad request" in record.error.lower():
+            st.info("💡 **Tip:** This 'Bad Request' error usually means your API key is invalid/expired, or the selected model is not supported or currently disabled by the provider. Please verify your API key in the sidebar.")
+        elif "401" in record.error or "unauthorized" in record.error.lower():
+            st.info("💡 **Tip:** This 'Unauthorized' error indicates the API key is incorrect. Please check your sidebar API key.")
+        elif "429" in record.error or "rate limit" in record.error.lower():
+            st.warning("⚠️ **Rate Limit Exceeded:** Free tier endpoints have strict rate limits. Please wait a moment before trying again, or configure a paid model tier/key.")
     strategy = getattr(record, "retrieval_strategy", "unknown")
     if strategy != "unknown":
         st.caption(f"{record.status.upper()} | {record.latency_ms} ms | Strategy: `{strategy}` | query_id={record.query_id}")
@@ -1414,7 +1428,7 @@ def qa_prompt_help() -> str:
     return "Ask about architecture, important functions, call paths, classes, imports, or implementation behavior."
 
 
-def render_rectification_downloads(repo: RepoMetadata | None) -> None:
+def render_rectification_downloads(repo: RepoMetadata | None, kind: str) -> None:
     if not repo:
         return
     if "rectification_result" in st.session_state:
@@ -1433,7 +1447,7 @@ def render_rectification_downloads(repo: RepoMetadata | None) -> None:
                     data=res.get("download_content"),
                     file_name=file_name,
                     mime="text/plain",
-                    key="download_fixed_file"
+                    key=f"download_fixed_file_{kind}"
                 )
                 
             with col2:
@@ -1447,12 +1461,12 @@ def render_rectification_downloads(repo: RepoMetadata | None) -> None:
                         data=zip_data,
                         file_name=f"{repo.name}_fixed.zip",
                         mime="application/zip",
-                        key="download_fixed_repo_zip"
+                        key=f"download_fixed_repo_zip_{kind}"
                     )
                 except Exception as e:
                     st.error(f"Error generating repository zip: {e}")
                     
-            if st.button("Dismiss Notification", key="dismiss_rectification"):
+            if st.button("Dismiss Notification", key=f"dismiss_rectification_{kind}"):
                 del st.session_state.rectification_result
                 st.rerun()
 
@@ -1468,7 +1482,7 @@ def render_codegraph_qa(repo: RepoMetadata | None) -> None:
         st.error("No CodeGraph graph found. Please build or import a repository with CodeGraph output first.")
         return
 
-    render_rectification_downloads(repo)
+    render_rectification_downloads(repo, "codegraph")
 
     left, right = st.columns([3, 1])
     with left:
@@ -1567,7 +1581,7 @@ def render_graphify_qa(repo: RepoMetadata | None) -> None:
         st.error("No Graphify graph found. Please build or import a repository with Graphify output first.")
         return
 
-    render_rectification_downloads(repo)
+    render_rectification_downloads(repo, "graphify")
 
     left, right = st.columns([3, 1])
     with left:
