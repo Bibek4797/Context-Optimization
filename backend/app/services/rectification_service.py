@@ -6,16 +6,61 @@ from typing import Any
 from app.services.storage import LocalStorage
 
 
-def strip_markdown_code_fences(code: str) -> str:
-    code = code.strip()
-    if code.startswith("```"):
+def clean_xml_code_block(code: str) -> str:
+    # 1. Remove leading/trailing newlines and carriage returns, keeping leading/trailing spaces
+    code = code.strip("\r\n")
+    
+    # 2. Check for markdown code block fences
+    stripped_code = code.strip()
+    if stripped_code.startswith("```"):
         lines = code.splitlines()
-        if len(lines) >= 2:
-            if lines[-1].strip() == "```":
-                return "\n".join(lines[1:-1]).strip()
+        start_idx = -1
+        for i, line in enumerate(lines):
+            if line.strip().startswith("```"):
+                start_idx = i
+                break
+        end_idx = -1
+        for i in range(len(lines) - 1, start_idx, -1):
+            if lines[i].strip() == "```":
+                end_idx = i
+                break
+        
+        if start_idx != -1:
+            if end_idx != -1:
+                code_lines = lines[start_idx+1:end_idx]
             else:
-                return "\n".join(lines[1:]).strip()
+                code_lines = lines[start_idx+1:]
+            code = "\n".join(code_lines)
+            code = code.strip("\r\n")
+            
     return code
+
+
+def adjust_indentation(replacement_str: str, file_indent: str, base_indent_len: int) -> str:
+    repl_lines = replacement_str.splitlines()
+    if not repl_lines:
+        return replacement_str
+        
+    delta_indent = len(file_indent) - base_indent_len
+    adjusted_lines = []
+    
+    for line in repl_lines:
+        if not line.strip():
+            adjusted_lines.append("")
+            continue
+            
+        if delta_indent > 0:
+            adjusted_line = (" " * delta_indent) + line
+        elif delta_indent < 0:
+            remove_len = abs(delta_indent)
+            line_leading_spaces = len(line) - len(line.lstrip())
+            to_remove = min(remove_len, line_leading_spaces)
+            adjusted_line = line[to_remove:]
+        else:
+            adjusted_line = line
+        adjusted_lines.append(adjusted_line)
+        
+    return "\n".join(adjusted_lines)
 
 
 class RectificationService:
@@ -44,9 +89,9 @@ class RectificationService:
             # Read existing file content and normalize carriage returns to standard Unix newlines
             content = abs_path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
             
-            # Normalize target and replacement newlines, and strip markdown fences if present
-            target_str = strip_markdown_code_fences(original_code).replace("\r\n", "\n")
-            target_replacement = strip_markdown_code_fences(replacement_code).replace("\r\n", "\n")
+            # Normalize target and replacement newlines, and clean/strip markdown fences properly
+            target_str = clean_xml_code_block(original_code).replace("\r\n", "\n")
+            target_replacement = clean_xml_code_block(replacement_code).replace("\r\n", "\n")
             
             new_content = None
             
@@ -54,28 +99,35 @@ class RectificationService:
             if target_str in content:
                 new_content = content.replace(target_str, target_replacement, 1)
             else:
-                # Layer B: Try matching with stripped leading/trailing whitespaces
-                stripped_target = target_str.strip()
-                if stripped_target in content:
-                    new_content = content.replace(stripped_target, target_replacement.strip(), 1)
-                else:
-                    # Layer C: Find target block ignoring leading/trailing whitespaces but preserving line structure
-                    target_lines = [l.strip() for l in target_str.splitlines()]
-                    content_lines = content.splitlines()
+                # Layer B: Find target block ignoring leading/trailing whitespaces but preserving line structure
+                target_lines = [l.strip() for l in target_str.splitlines()]
+                content_lines = content.splitlines()
+                
+                match_idx = -1
+                # Basic rolling window search for the block
+                for i in range(len(content_lines) - len(target_lines) + 1):
+                    window = [content_lines[i + j].strip() for j in range(len(target_lines))]
+                    if window == target_lines:
+                        match_idx = i
+                        break
+                        
+                if match_idx != -1:
+                    # Find base indentation of first line in file matched block
+                    file_first_line = content_lines[match_idx]
+                    file_indent_len = len(file_first_line) - len(file_first_line.lstrip())
+                    file_indent = file_first_line[:file_indent_len]
                     
-                    match_idx = -1
-                    # Basic rolling window search for the block
-                    for i in range(len(content_lines) - len(target_lines) + 1):
-                        window = [content_lines[i + j].strip() for j in range(len(target_lines))]
-                        if window == target_lines:
-                            match_idx = i
-                            break
-                            
-                    if match_idx != -1:
-                        # Reconstruct the file with the replacement
-                        before = "\n".join(content_lines[:match_idx])
-                        after = "\n".join(content_lines[match_idx + len(target_lines):])
-                        new_content = (before + "\n" if before else "") + target_replacement + ("\n" + after if after else "")
+                    # Find base indentation of first line in proposed target_str
+                    target_first_line = target_str.splitlines()[0] if target_str.splitlines() else ""
+                    target_indent_len = len(target_first_line) - len(target_first_line.lstrip())
+                    
+                    # Adjust indentation of target_replacement to match the file's indentation
+                    adjusted_replacement = adjust_indentation(target_replacement, file_indent, target_indent_len)
+                    
+                    # Reconstruct the file with the replacement
+                    before = "\n".join(content_lines[:match_idx])
+                    after = "\n".join(content_lines[match_idx + len(target_lines):])
+                    new_content = (before + "\n" if before else "") + adjusted_replacement + ("\n" + after if after else "")
             
             if new_content is None:
                 return {

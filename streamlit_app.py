@@ -25,6 +25,7 @@ from app.services.file_utils import clean_repo_name, safe_extract_zip  # noqa: E
 from app.services.graph_retrieval_service import GraphRetrievalService  # noqa: E402
 from app.services.graphify_service import GraphifyService  # noqa: E402
 from app.services.llm.gemini import GeminiProvider  # noqa: E402
+from app.services.llm.openai_compatible import GroqProvider, OpenRouterProvider  # noqa: E402
 from app.services.repo_service import RepoService  # noqa: E402
 from app.services.storage import LocalStorage  # noqa: E402
 from app.services.token_service import TokenService  # noqa: E402
@@ -267,13 +268,105 @@ def metric_row(repo: RepoMetadata) -> None:
     cols[3].metric("Python lines", repo.stats.python_lines)
 
 
+def get_active_llm_provider() -> LLMProvider:
+    provider = st.session_state.get("llm_provider_select", "Gemini")
+    api_key = st.session_state.get(f"{provider.lower()}_api_key_override", "")
+    
+    # Get model
+    selected_option = st.session_state.get(f"model_select_{provider.lower()}", "Custom Model...")
+    if selected_option == "Custom Model...":
+        model = st.session_state.get(f"custom_model_{provider.lower()}", "")
+    else:
+        model = selected_option
+        
+    if model and " (Latest Free-Tier)" in model:
+        model = model.replace(" (Latest Free-Tier)", "").strip()
+        
+    if not model:
+        if provider == "Gemini":
+            model = "gemini-2.5-flash"
+        elif provider == "Groq":
+            model = "llama-3.3-70b-versatile"
+        elif provider == "OpenRouter":
+            model = "meta-llama/llama-3.3-70b-instruct:free"
+            
+    if provider == "Gemini":
+        return GeminiProvider(api_key=api_key, model=model)
+    elif provider == "Groq":
+        return GroqProvider(api_key=api_key, model=model)
+    elif provider == "OpenRouter":
+        return OpenRouterProvider(api_key=api_key, model=model)
+        
+    return GeminiProvider(api_key=api_key, model=model)
+
+
 def render_status(repo: RepoMetadata | None) -> None:
-    model_info = llm_provider.get_model_info()
+    st.sidebar.subheader("LLM Configuration")
+    
+    # Provider selectbox
+    provider = st.sidebar.selectbox("LLM Provider", ["Gemini", "Groq", "OpenRouter"], key="llm_provider_select")
+    
+    # API key override text input
+    default_key = ""
+    if provider == "Gemini":
+        default_key = get_secret("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
+    elif provider == "Groq":
+        default_key = get_secret("GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or ""
+    elif provider == "OpenRouter":
+        default_key = get_secret("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or ""
+
+    session_key_name = f"{provider.lower()}_api_key_override"
+    if session_key_name not in st.session_state:
+        st.session_state[session_key_name] = default_key
+        
+    api_key = st.sidebar.text_input(
+        f"{provider} API Key",
+        value=st.session_state[session_key_name],
+        type="password",
+        key=f"api_key_input_{provider.lower()}"
+    )
+    st.session_state[session_key_name] = api_key
+    
+    # Model selectbox
+    models_dict = {
+        "Gemini": [
+            "gemini-2.5-flash (Latest Free-Tier)",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "Custom Model..."
+        ],
+        "Groq": [
+            "llama-3.3-70b-versatile (Latest Free-Tier)",
+            "llama3-8b-8192",
+            "gemma2-9b-it",
+            "mixtral-8x7b-32768",
+            "Custom Model..."
+        ],
+        "OpenRouter": [
+            "meta-llama/llama-3.3-70b-instruct:free (Latest Free-Tier)",
+            "google/gemini-2.5-flash:free",
+            "qwen/qwen-2.5-72b-instruct:free",
+            "deepseek/deepseek-chat:free",
+            "Custom Model..."
+        ]
+    }
+    
+    model_options = models_dict[provider]
+    selected_model_option = st.sidebar.selectbox("Model", model_options, key=f"model_select_{provider.lower()}")
+    
+    if selected_model_option == "Custom Model...":
+        selected_model = st.sidebar.text_input("Enter Model Name", value="", key=f"custom_model_{provider.lower()}")
+    else:
+        selected_model = selected_model_option
+        if " (Latest Free-Tier)" in selected_model:
+            selected_model = selected_model.replace(" (Latest Free-Tier)", "").strip()
+        
     st.sidebar.subheader("Status")
     st.sidebar.write(f"Repo: **{repo.name if repo else 'none'}**")
     st.sidebar.write(f"Pipeline: **{repo.status if repo else 'idle'}**")
-    st.sidebar.write(f"Model: **{model_info.model}**")
-    st.sidebar.write(f"Gemini key: **{'configured' if model_info.configured else 'missing'}**")
+    st.sidebar.write(f"Model: **{selected_model if selected_model else 'none'}**")
+    st.sidebar.write(f"Key configured: **{'yes' if api_key else 'no'}**")
     
     st.sidebar.subheader("Codebase Rectifier")
     st.session_state.rectify_enabled = st.sidebar.checkbox(
@@ -1446,8 +1539,16 @@ def render_codegraph_qa(repo: RepoMetadata | None) -> None:
             st.warning("Please enter a valid integer for Max Nodes.")
             
     if st.button("Ask CodeGraph QA", disabled=not question.strip(), type="primary"):
-        with st.spinner("Selecting graph neighborhood and calling Gemini..."):
-            record = chat_service.graph_optimized_qa(
+        with st.spinner("Selecting graph neighborhood and calling LLM..."):
+            active_llm = get_active_llm_provider()
+            active_chat_service = ChatService(
+                storage=storage,
+                graph_retrieval_service=GraphRetrievalService(storage=storage, token_service=TokenService()),
+                token_service=TokenService(),
+                llm_provider=active_llm,
+                pipeline=pipeline,
+            )
+            record = active_chat_service.graph_optimized_qa(
                 repo.repo_id,
                 question.strip(),
                 st.session_state.session_id,
@@ -1548,8 +1649,16 @@ def render_graphify_qa(repo: RepoMetadata | None) -> None:
     max_nodes = max(1, token_budget_val // 250)
 
     if st.button("Ask Graphify QA", disabled=not question.strip(), type="primary"):
-        with st.spinner("Selecting graph neighborhood and calling Gemini..."):
-            record = chat_service.graph_optimized_qa(
+        with st.spinner("Selecting graph neighborhood and calling LLM..."):
+            active_llm = get_active_llm_provider()
+            active_chat_service = ChatService(
+                storage=storage,
+                graph_retrieval_service=GraphRetrievalService(storage=storage, token_service=TokenService()),
+                token_service=TokenService(),
+                llm_provider=active_llm,
+                pipeline=pipeline,
+            )
+            record = active_chat_service.graph_optimized_qa(
                 repo.repo_id,
                 question.strip(),
                 st.session_state.session_id,
