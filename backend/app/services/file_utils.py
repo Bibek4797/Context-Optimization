@@ -153,3 +153,17 @@ def validate_github_url(url: str) -> str:
         raise ValueError("GitHub URL must include owner and repository.")
     return f"https://github.com/{owner}/{repo}.git"
 
+
+def zip_dir_to_bytes(dir_path: Path) -> bytes:
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for file_path in sorted(dir_path.rglob("*")):
+            if file_path.is_file():
+                rel_path = file_path.relative_to(dir_path)
+                if rel_path.suffix == ".bak" or is_ignored(rel_path):
+                    continue
+                zip_file.write(file_path, arcname=rel_path.as_posix())
+    return buf.getvalue()
+

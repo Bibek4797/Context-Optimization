@@ -6,6 +6,18 @@ from typing import Any
 from app.services.storage import LocalStorage
 
 
+def strip_markdown_code_fences(code: str) -> str:
+    code = code.strip()
+    if code.startswith("```"):
+        lines = code.splitlines()
+        if len(lines) >= 2:
+            if lines[-1].strip() == "```":
+                return "\n".join(lines[1:-1]).strip()
+            else:
+                return "\n".join(lines[1:]).strip()
+    return code
+
+
 class RectificationService:
     def __init__(self, storage: LocalStorage, pipeline: Any) -> None:
         self.storage = storage
@@ -29,30 +41,32 @@ class RectificationService:
             return {"status": "failed", "error": f"File '{file_path}' does not exist on disk."}
 
         try:
-            # Read existing file content
-            content = abs_path.read_text(encoding="utf-8", errors="replace")
+            # Read existing file content and normalize carriage returns to standard Unix newlines
+            content = abs_path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
             
-            # Match validation layers
-            target_str = original_code
+            # Normalize target and replacement newlines, and strip markdown fences if present
+            target_str = strip_markdown_code_fences(original_code).replace("\r\n", "\n")
+            target_replacement = strip_markdown_code_fences(replacement_code).replace("\r\n", "\n")
+            
             new_content = None
             
             # Layer A: Exact match
             if target_str in content:
-                new_content = content.replace(target_str, replacement_code, 1)
+                new_content = content.replace(target_str, target_replacement, 1)
             else:
-                # Layer B: Try matching with stripped leading/trailing whitespaces (common LLM artifact)
+                # Layer B: Try matching with stripped leading/trailing whitespaces
                 stripped_target = target_str.strip()
                 if stripped_target in content:
-                    new_content = content.replace(stripped_target, replacement_code.strip(), 1)
+                    new_content = content.replace(stripped_target, target_replacement.strip(), 1)
                 else:
-                    # Layer C: Find target block ignoring trailing whitespaces on each line
-                    target_lines = [l.rstrip() for l in target_str.splitlines() if l.strip()]
+                    # Layer C: Find target block ignoring leading/trailing whitespaces but preserving line structure
+                    target_lines = [l.strip() for l in target_str.splitlines()]
                     content_lines = content.splitlines()
                     
                     match_idx = -1
                     # Basic rolling window search for the block
                     for i in range(len(content_lines) - len(target_lines) + 1):
-                        window = [content_lines[i + j].rstrip() for j in range(len(target_lines))]
+                        window = [content_lines[i + j].strip() for j in range(len(target_lines))]
                         if window == target_lines:
                             match_idx = i
                             break
@@ -61,7 +75,7 @@ class RectificationService:
                         # Reconstruct the file with the replacement
                         before = "\n".join(content_lines[:match_idx])
                         after = "\n".join(content_lines[match_idx + len(target_lines):])
-                        new_content = (before + "\n" if before else "") + replacement_code + ("\n" + after if after else "")
+                        new_content = (before + "\n" if before else "") + target_replacement + ("\n" + after if after else "")
             
             if new_content is None:
                 return {
@@ -93,6 +107,7 @@ class RectificationService:
                 "status": "success",
                 "file_path": file_path,
                 "backup_path": str(backup_path.name),
+                "new_content": new_content,
                 "message": f"Successfully applied changes to '{file_path}'. A backup copy was created."
             }
             

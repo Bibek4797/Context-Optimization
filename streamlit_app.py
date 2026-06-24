@@ -1171,9 +1171,14 @@ def parse_and_render_code_fix(answer_text: str, repo_id: str) -> None:
                 replacement_code=replacement_code
             )
             if res.get("status") == "success":
-                st.success(res.get("message"))
+                st.session_state.rectification_result = {
+                    "repo_id": repo_id,
+                    "file_path": filepath,
+                    "download_content": res.get("new_content") or replacement_code,
+                    "message": res.get("message")
+                }
                 st.balloons()
-                st.info("🔄 Repository has been successfully re-indexed in the background! Ask another question to see the updated graph.")
+                st.rerun()
             else:
                 st.error(f"❌ Error applying fix: {res.get('error')}")
 
@@ -1326,7 +1331,47 @@ def qa_prompt_help() -> str:
     return "Ask about architecture, important functions, call paths, classes, imports, or implementation behavior."
 
 
-
+def render_rectification_downloads(repo: RepoMetadata | None) -> None:
+    if not repo:
+        return
+    if "rectification_result" in st.session_state:
+        res = st.session_state.rectification_result
+        if res.get("repo_id") == repo.repo_id:
+            st.success(f"🎉 {res.get('message')}")
+            
+            # Create two columns for download buttons
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # File download button
+                file_name = Path(res.get("file_path")).name
+                st.download_button(
+                    label=f"📥 Download Fixed {file_name}",
+                    data=res.get("download_content"),
+                    file_name=file_name,
+                    mime="text/plain",
+                    key="download_fixed_file"
+                )
+                
+            with col2:
+                # Repo ZIP download button
+                try:
+                    from app.services.file_utils import zip_dir_to_bytes
+                    repo_root = storage.repo_source_dir(repo.repo_id)
+                    zip_data = zip_dir_to_bytes(repo_root)
+                    st.download_button(
+                        label="📦 Download Complete Fixed Repo Zip",
+                        data=zip_data,
+                        file_name=f"{repo.name}_fixed.zip",
+                        mime="application/zip",
+                        key="download_fixed_repo_zip"
+                    )
+                except Exception as e:
+                    st.error(f"Error generating repository zip: {e}")
+                    
+            if st.button("Dismiss Notification", key="dismiss_rectification"):
+                del st.session_state.rectification_result
+                st.rerun()
 
 
 def render_codegraph_qa(repo: RepoMetadata | None) -> None:
@@ -1339,6 +1384,8 @@ def render_codegraph_qa(repo: RepoMetadata | None) -> None:
     if not codegraph_path.exists() or codegraph_path.stat().st_size == 0:
         st.error("No CodeGraph graph found. Please build or import a repository with CodeGraph output first.")
         return
+
+    render_rectification_downloads(repo)
 
     left, right = st.columns([3, 1])
     with left:
@@ -1428,6 +1475,8 @@ def render_graphify_qa(repo: RepoMetadata | None) -> None:
     if not graphify_path.exists() or graphify_path.stat().st_size == 0:
         st.error("No Graphify graph found. Please build or import a repository with Graphify output first.")
         return
+
+    render_rectification_downloads(repo)
 
     left, right = st.columns([3, 1])
     with left:
