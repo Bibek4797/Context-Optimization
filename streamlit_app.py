@@ -26,6 +26,7 @@ from app.services.graph_retrieval_service import GraphRetrievalService  # noqa: 
 from app.services.graphify_service import GraphifyService  # noqa: E402
 from app.services.llm.gemini import GeminiProvider  # noqa: E402
 from app.services.llm.openai_compatible import GroqProvider, OpenRouterProvider  # noqa: E402
+from app.services.llm.bedrock import BedrockProvider  # noqa: E402
 from app.services.repo_service import RepoService  # noqa: E402
 from app.services.storage import LocalStorage  # noqa: E402
 from app.services.token_service import TokenService  # noqa: E402
@@ -270,7 +271,6 @@ def metric_row(repo: RepoMetadata) -> None:
 
 def get_active_llm_provider() -> LLMProvider:
     provider = st.session_state.get("llm_provider_select", "Gemini")
-    api_key = st.session_state.get(f"{provider.lower()}_api_key_override", "")
     
     # Get model
     selected_option = st.session_state.get(f"model_select_{provider.lower()}", "Custom Model...")
@@ -289,7 +289,21 @@ def get_active_llm_provider() -> LLMProvider:
             model = "llama-3.3-70b-versatile"
         elif provider == "OpenRouter":
             model = "meta-llama/llama-3.3-70b-instruct:free"
+        elif provider == "Bedrock":
+            model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
             
+    if provider == "Bedrock":
+        aws_access_key = st.session_state.get("bedrock_access_key_override", "")
+        aws_secret_key = st.session_state.get("bedrock_secret_key_override", "")
+        aws_region = st.session_state.get("bedrock_region_override", "us-east-1")
+        return BedrockProvider(
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            aws_region=aws_region,
+            model=model
+        )
+        
+    api_key = st.session_state.get(f"{provider.lower()}_api_key_override", "")
     if provider == "Gemini":
         return GeminiProvider(api_key=api_key, model=model)
     elif provider == "Groq":
@@ -304,50 +318,89 @@ def render_status(repo: RepoMetadata | None) -> None:
     st.sidebar.subheader("LLM Configuration")
     
     # Provider selectbox
-    provider = st.sidebar.selectbox("LLM Provider", ["Gemini", "Groq", "OpenRouter"], key="llm_provider_select")
+    provider = st.sidebar.selectbox("LLM Provider", ["Gemini", "Groq", "OpenRouter", "Bedrock"], key="llm_provider_select")
     
-    # API key override text input
-    default_key = ""
-    if provider == "Gemini":
-        default_key = get_secret("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
-    elif provider == "Groq":
-        default_key = get_secret("GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or ""
-    elif provider == "OpenRouter":
-        default_key = get_secret("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or ""
+    # API key / Credential inputs
+    api_key = ""
+    aws_access_key = ""
+    aws_secret_key = ""
+    aws_region = "us-east-1"
+    
+    if provider != "Bedrock":
+        default_key = ""
+        if provider == "Gemini":
+            default_key = get_secret("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
+        elif provider == "Groq":
+            default_key = get_secret("GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or ""
+        elif provider == "OpenRouter":
+            default_key = get_secret("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or ""
 
-    session_key_name = f"{provider.lower()}_api_key_override"
-    if session_key_name not in st.session_state:
-        st.session_state[session_key_name] = default_key
+        session_key_name = f"{provider.lower()}_api_key_override"
+        if session_key_name not in st.session_state:
+            st.session_state[session_key_name] = default_key
+            
+        api_key = st.sidebar.text_input(
+            f"{provider} API Key",
+            value=st.session_state[session_key_name],
+            type="password",
+            key=f"api_key_input_{provider.lower()}"
+        )
+        st.session_state[session_key_name] = api_key
+    else:
+        # Bedrock credentials
+        default_access = get_secret("AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID") or ""
+        default_secret = get_secret("AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY") or ""
+        default_region = get_secret("AWS_DEFAULT_REGION") or os.getenv("AWS_DEFAULT_REGION") or get_secret("AWS_REGION") or os.getenv("AWS_REGION") or "us-east-1"
         
-    api_key = st.sidebar.text_input(
-        f"{provider} API Key",
-        value=st.session_state[session_key_name],
-        type="password",
-        key=f"api_key_input_{provider.lower()}"
-    )
-    st.session_state[session_key_name] = api_key
-    
+        if "bedrock_access_key_override" not in st.session_state:
+            st.session_state["bedrock_access_key_override"] = default_access
+        if "bedrock_secret_key_override" not in st.session_state:
+            st.session_state["bedrock_secret_key_override"] = default_secret
+        if "bedrock_region_override" not in st.session_state:
+            st.session_state["bedrock_region_override"] = default_region
+            
+        aws_access_key = st.sidebar.text_input(
+            "AWS Access Key ID",
+            value=st.session_state["bedrock_access_key_override"],
+            type="password",
+            key="bedrock_access_input"
+        )
+        aws_secret_key = st.sidebar.text_input(
+            "AWS Secret Access Key",
+            value=st.session_state["bedrock_secret_key_override"],
+            type="password",
+            key="bedrock_secret_input"
+        )
+        aws_region = st.sidebar.text_input(
+            "AWS Region",
+            value=st.session_state["bedrock_region_override"],
+            key="bedrock_region_input"
+        )
+        
+        st.session_state["bedrock_access_key_override"] = aws_access_key
+        st.session_state["bedrock_secret_key_override"] = aws_secret_key
+        st.session_state["bedrock_region_override"] = aws_region
+        
     # Model selectbox
     models_dict = {
         "Gemini": [
             "gemini-2.5-flash (Latest Free-Tier)",
-            "gemini-2.0-flash",
             "gemini-1.5-flash",
-            "gemini-1.5-pro",
             "Custom Model..."
         ],
         "Groq": [
             "llama-3.3-70b-versatile (Latest Free-Tier)",
-            "llama3-8b-8192",
-            "gemma2-9b-it",
-            "mixtral-8x7b-32768",
+            "llama-3.1-8b-instant",
             "Custom Model..."
         ],
         "OpenRouter": [
             "meta-llama/llama-3.3-70b-instruct:free (Latest Free-Tier)",
             "google/gemini-2.5-flash:free",
-            "qwen/qwen-2.5-72b-instruct:free",
-            "deepseek/deepseek-chat:free",
+            "Custom Model..."
+        ],
+        "Bedrock": [
+            "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "anthropic.claude-3-haiku-20240307-v1:0",
             "Custom Model..."
         ]
     }
@@ -362,11 +415,12 @@ def render_status(repo: RepoMetadata | None) -> None:
         if " (Latest Free-Tier)" in selected_model:
             selected_model = selected_model.replace(" (Latest Free-Tier)", "").strip()
         
+    key_configured = bool(aws_access_key and aws_secret_key) if provider == "Bedrock" else bool(api_key)
     st.sidebar.subheader("Status")
     st.sidebar.write(f"Repo: **{repo.name if repo else 'none'}**")
     st.sidebar.write(f"Pipeline: **{repo.status if repo else 'idle'}**")
     st.sidebar.write(f"Model: **{selected_model if selected_model else 'none'}**")
-    st.sidebar.write(f"Key configured: **{'yes' if api_key else 'no'}**")
+    st.sidebar.write(f"Key configured: **{'yes' if key_configured else 'no'}**")
     
     st.sidebar.subheader("Codebase Rectifier")
     st.session_state.rectify_enabled = st.sidebar.checkbox(
