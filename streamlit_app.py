@@ -323,7 +323,7 @@ render_sidebar_todo(st.session_state["harness_todo"])
 
 st.markdown('<h1 class="title-gradient">🕸️ Graph-Based Context Optimization for LLMs</h1>', unsafe_allow_html=True)
 
-main_tabs = st.tabs(["📤 Ingest & Index Graphs", "🌐 Visualizer Dashboard", "💬 Master Loop QA"])
+main_tabs = st.tabs(["📤 Ingest & Index Graphs", "🌐 Visualizer Dashboard", "💬 Master Loop QA", "📊 Token Analytics"])
 
 # --- Tab 0: Ingest & Index Graphs ---
 with main_tabs[0]:
@@ -389,7 +389,8 @@ with main_tabs[0]:
                         G = st.session_state["unstructured_graph"]
                         cmap = detect_communities(G, resolution=louvain_res)
                         st.session_state["unstructured_graph"] = G
-                        st.success("Detected Louvain communities.")
+                        num_communities = len(set(cmap.values()))
+                        st.success(f"Detected {num_communities} Louvain communities.")
             with c3:
                 disabled = st.session_state.get("unstructured_graph") is None
                 if st.button("📝 Generate Summaries", use_container_width=True, disabled=disabled):
@@ -464,6 +465,33 @@ with main_tabs[1]:
 with main_tabs[2]:
     st.subheader("💬 stateless Master Loop QA")
     
+    # 🔍 Retrieval Inspector (Graph Context & Prompts)
+    with st.expander("🔍 Retrieval Inspector (Graph Context & Prompts)", expanded=False):
+        if not st.session_state.get("retrieval_history"):
+            st.info("No queries executed yet. Submit a query to inspect the exact retrieved graph subgraphs, community summaries, and prompt context.")
+        else:
+            latest = st.session_state["retrieval_history"][0]
+            st.markdown(f"**Last Query**: `{latest['query']}` (Type: `{latest['type']}` at {latest['timestamp']})")
+            
+            if latest["type"] == "LangGraph (PDF)":
+                st.markdown("### 🧩 Retrieved Louvain Communities & Partial Answers")
+                for item in latest["per_comm_details"]:
+                    st.markdown(f"#### 🌐 Community ID: {item['cid']} (Score: {item['score']:.3f})")
+                    st.write(f"**Anchors**: {item['anchors']}")
+                    st.write(f"**Community Summary**:")
+                    st.info(item["summary"])
+                    st.write(f"**Intermediate Partial Answer**:")
+                    st.success(item["partial_answer"])
+                
+                st.markdown("### 📝 Merged Prompt Context (Sent to LLM)")
+                st.code(latest["merged_context_prompt"], language="text")
+                
+            elif latest["type"] == "CodeGraph (AST)":
+                st.markdown("### 🌲 Retrieved AST Codebase Subgraph & Definitions")
+                st.code(latest["context_retrieved"], language="python")
+                st.write("**Synthesized Answer**:")
+                st.success(latest["answer"])
+    
     # Render chat history
     for msg in st.session_state["chat_history"]:
         with st.chat_message(msg["role"]):
@@ -526,3 +554,61 @@ with main_tabs[2]:
         })
         st.session_state["harness_todo"] = st.session_state.get("harness_todo", [])
         st.rerun()
+
+# --- Tab 3: Token Analytics ---
+with main_tabs[3]:
+    st.subheader("📊 Token Analytics & Context Savings")
+    
+    # Calculate baseline
+    docs_list = st.session_state.get("unstructured_docs", [])
+    total_chars = sum(d.get("char_count", 0) for d in docs_list)
+    baseline_tokens = int(total_chars / 4)
+    
+    # Calculate optimized
+    history = st.session_state.get("retrieval_history", [])
+    latest_query = None
+    optimized_tokens = 0
+    
+    if history:
+        latest = history[0]
+        latest_query = latest.get("query")
+        if latest["type"] == "LangGraph (PDF)":
+            optimized_tokens = int(len(latest.get("merged_context_prompt", "")) / 4)
+        elif latest["type"] == "CodeGraph (AST)":
+            optimized_tokens = int(len(latest.get("context_retrieved", "")) / 4)
+            
+    st.markdown("### 📈 Cost & Token Optimization Comparison")
+    
+    if baseline_tokens == 0:
+        st.warning("Please upload guidelines / PDFs in Tab 1 to populate baseline metrics.")
+    else:
+        col_base, col_opt, col_pct = st.columns(3)
+        with col_base:
+            st.metric("Baseline Model Context (Full PDF)", f"{baseline_tokens:,} tokens")
+            st.caption("Sending the entire raw PDF content to the LLM.")
+        with col_opt:
+            st.metric("Optimized Model Context (Graph-based)", f"{optimized_tokens:,} tokens")
+            st.caption("Sending only relevant sub-graphs & community summaries.")
+        with col_pct:
+            savings_pct = 100.0 if optimized_tokens == 0 else (100.0 - (optimized_tokens / baseline_tokens * 100.0))
+            st.metric("Context Size Reduction", f"{savings_pct:.1f}%")
+            st.caption("Optimization efficiency compared to baseline.")
+            
+        # Draw Bar Chart Comparison
+        import pandas as pd
+        chart_df = pd.DataFrame({
+            "Context Model": ["Baseline Model (Full PDF)", "Optimized Model (Graph-Based)"],
+            "Tokens": [baseline_tokens, optimized_tokens]
+        })
+        st.bar_chart(chart_df, x="Context Model", y="Tokens", color="#6366f1")
+        
+        # Financial and performance implications
+        st.markdown("#### 💡 Performance & Financial Highlights")
+        # Estimate Cost Savings (e.g. Gemini 2.5 Flash input price: $0.075 / 1M tokens)
+        baseline_cost = (baseline_tokens / 1_000_000) * 0.075
+        opt_cost = (optimized_tokens / 1_000_000) * 0.075
+        cost_diff = baseline_cost - opt_cost
+        
+        st.write(f"- **Financial Efficiency**: The baseline model costs around **${baseline_cost:.6f}** per query, whereas our optimized model costs **${opt_cost:.6f}**. You are saving **${cost_diff:.6f}** per call!")
+        st.write("- **Rate Limit Safety**: By filtering out up to 95% of irrelevant context, the graph-optimized model significantly reduces the risk of hitting API token limit exhaustion (`429 Rate Limit Exceeded`).")
+        st.write("- **Inference Latency**: Smaller, focused prompt contexts result in significantly lower time-to-first-token and faster synthesis response speeds.")

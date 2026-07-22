@@ -69,6 +69,19 @@ class AgentHarness:
             )
             if record.status == "failed":
                 return f"Error querying CodeGraph: {record.error}"
+                
+            # Log CodeGraph retrieval details
+            if "retrieval_history" not in st.session_state:
+                st.session_state["retrieval_history"] = []
+            
+            st.session_state["retrieval_history"].insert(0, {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "query": query,
+                "type": "CodeGraph (AST)",
+                "context_retrieved": record.context or "No explicit source context retrieved.",
+                "answer": record.answer
+            })
+            
             return f"CodeGraph Answer for '{query}':\n{record.answer}\n\nContext Retrieved:\n{record.context}"
         except Exception as e:
             return f"Exception querying CodeGraph: {str(e)}"
@@ -91,6 +104,41 @@ class AgentHarness:
             
             # Save updated cache back
             st.session_state["unstructured_node_embeddings"] = results["updated_node_embeddings_cache"]
+            
+            # Log LangGraph retrieval details
+            if "retrieval_history" not in st.session_state:
+                st.session_state["retrieval_history"] = []
+                
+            per_comm_details = []
+            merged_context_parts = []
+            for cid, score in results.get("ranked_communities", []):
+                comm_ctx = results.get("per_community_contexts", {}).get(cid, {})
+                summary_text = comm_ctx.get("summary", "")
+                partial_ans = comm_ctx.get("partial_answer", "")
+                anchors = comm_ctx.get("anchors", [])
+                
+                per_comm_details.append({
+                    "cid": cid,
+                    "score": score,
+                    "summary": summary_text,
+                    "partial_answer": partial_ans,
+                    "anchors": anchors
+                })
+                
+                merged_context_parts.append(
+                    f"--- Community {cid} (Relevance Score: {score:.3f}) ---\n"
+                    f"Summary: {summary_text}\n"
+                    f"Intermediate Answer: {partial_ans}"
+                )
+                
+            st.session_state["retrieval_history"].insert(0, {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "query": query,
+                "type": "LangGraph (PDF)",
+                "ranked_communities": results.get("ranked_communities", []),
+                "per_comm_details": per_comm_details,
+                "merged_context_prompt": "\n\n".join(merged_context_parts)
+            })
             
             return f"LangGraph Answer for '{query}':\n{results['final_answer']}"
         except Exception as e:
