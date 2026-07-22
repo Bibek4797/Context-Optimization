@@ -31,7 +31,7 @@ CLASS_NODE_TYPES = {"class_definition", "class_declaration", "class", "type_spec
 FUNCTION_NODE_TYPES = {
     "function_definition", "function_declaration", "arrow_function", 
     "method_definition", "function", "method_declaration", 
-    "function_item", "method_invocation"
+    "function_item"
 }
 IMPORT_NODE_TYPES = {"import_statement", "import_from_statement", "import_spec", "import_declaration", "use_declaration"}
 CALL_NODE_TYPES = {"call", "call_expression", "method_invocation"}
@@ -59,6 +59,7 @@ class CodeGraphService:
             module_id = self._node_id("module", rel_path, module_name, 1)
             
             # Module source snippet capped at 800 characters
+            module_snippet = text[:800] + "\n..." if len(text) > 800 else text
             module_node = GraphNode(
                 node_id=module_id,
                 node_type="module",
@@ -66,7 +67,7 @@ class CodeGraphService:
                 file_path=rel_path,
                 line_start=1,
                 line_end=max(1, repo_file.line_count),
-                source_snippet=None,
+                source_snippet=module_snippet,
                 metadata={"path": rel_path},
             )
             nodes[module_id] = module_node
@@ -125,10 +126,21 @@ class CodeGraphService:
             self._add_edge(edges, "imports", source_id, target_id, score=1.0)
 
         # Resolve calls
+        GENERIC_BUILTINS = {
+            "print", "len", "range", "dict", "list", "set", "tuple", "int", "str", "float", "bool",
+            "enumerate", "zip", "sum", "min", "max", "abs", "round", "super", "getattr", "setattr",
+            "hasattr", "isinstance", "issubclass", "append", "split", "join", "replace", "strip",
+            "format", "open", "read", "write", "close", "any", "all", "map", "filter", "next",
+            "iter", "sorted", "reversed", "dir", "type", "id", "hash", "repr", "callable", "write_bytes",
+            "read_text", "write_text", "get", "post", "put", "delete", "request"
+        }
         for source_id, call_name, line_no in pending_calls:
+            short = call_name.split(".")[-1]
+            if short.lower() in GENERIC_BUILTINS or call_name.lower() in GENERIC_BUILTINS:
+                continue
+                
             target_id = symbol_index.get(call_name)
             if target_id is None:
-                short = call_name.split(".")[-1]
                 target_id = symbol_index.get(short)
             if target_id is None:
                 target_id = self._node_id("external_symbol", call_name, call_name, line_no or 0)
@@ -359,7 +371,7 @@ class CodeGraphService:
             file_path=rel_path,
             line_start=line_start,
             line_end=line_end,
-            source_snippet=None,
+            source_snippet=segment,
             metadata={"qualified_name": qualname, "tree_sitter_type": node.type},
         )
 

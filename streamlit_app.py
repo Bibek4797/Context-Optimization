@@ -427,27 +427,48 @@ with main_tabs[1]:
     col_code, col_pdf = st.columns(2)
     
     with col_code:
-        st.markdown("### 🌲 Tree-sitter CodeGraph Network")
+        st.markdown("### 📂 Codebase Graph Visualizer")
         repo_id = st.session_state.get("repo_id")
         if not repo_id:
-            st.warning("Upload a python codebase in Tab 1 to visualize the CodeGraph.")
+            st.warning("Upload a codebase in Tab 1 to visualize the Codebase Graph.")
         else:
-            graph_doc = storage.load_codegraph(repo_id)
-            if not graph_doc:
-                st.error("Could not load CodeGraph file.")
+            view_mode = st.radio(
+                "Abstraction Level:",
+                ["Graphify (High-Level Architecture)", "CodeGraph (AST-Level Details)"],
+                horizontal=True,
+                key="codebase_visualizer_view_mode"
+            )
+            
+            if view_mode.startswith("Graphify"):
+                graph_doc = storage.load_graphify(repo_id)
+                graph_title = "Graphify Network"
             else:
-                with st.spinner("Compiling CodeGraph visualization..."):
+                graph_doc = storage.load_codegraph(repo_id)
+                graph_title = "CodeGraph AST Network"
+                
+            if not graph_doc:
+                st.error(f"Could not load {graph_title} file.")
+            else:
+                with st.spinner(f"Compiling {graph_title} visualization..."):
                     # Map GraphDocument to NetworkX Graph
                     G_code = nx.Graph()
                     for node in graph_doc.nodes:
                         if node.node_type == "cli_output":
                             continue
+                        # Use first 300 chars of source snippet or default location info as visual description
+                        desc = node.source_snippet
+                        if not desc:
+                            if node.file_path:
+                                desc = f"Line {node.line_start} in {node.file_path}"
+                            else:
+                                desc = f"{node.node_type.capitalize()}: {node.label}"
+                                
                         G_code.add_node(
                             node.node_id,
                             label=node.label,
                             type=node.node_type,
                             community_id=0,
-                            description=node.source_snippet or f"Line {node.line_start} in {node.file_path}"
+                            description=desc
                         )
                     for edge in graph_doc.edges:
                         G_code.add_edge(
@@ -461,7 +482,7 @@ with main_tabs[1]:
                         import streamlit.components.v1 as components
                         components.html(code_html, height=520, scrolling=False)
                     except Exception as e:
-                        st.error(f"Could not render CodeGraph: {e}")
+                        st.error(f"Could not render {graph_title}: {e}")
                         
     with col_pdf:
         st.markdown("### 🕸️ LangGraph Unstructured Community Network")
