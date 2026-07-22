@@ -64,7 +64,7 @@ def generate_text(prompt: str, json_mode: bool = False, retries: int = 5, backof
                 print(f"[LLM Error] Gemini generation failed: {e}")
                 raise e
                 
-    elif provider == "Groq (Llama 3.3)":
+    elif provider.startswith("Groq"):
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
