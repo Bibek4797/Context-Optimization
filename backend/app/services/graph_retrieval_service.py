@@ -511,47 +511,31 @@ class GraphRetrievalService:
         """Route to the native query engine of CodeGraph / Graphify based on source_selection.
 
         Only uses the external CLI tools (graphify CLI or CodeGraph Node.js).
-        If the CLI fails, it falls back to the Python Advanced Hybrid Scoring System.
+        If the CLI fails, the exception is raised directly to the user so they can inspect why it failed.
         """
-        selected_nodes: list[GraphNode] = []
-        selected_edges: list[GraphEdge] = []
+        if source_selection == "graphify":
+            if not graphify or not graphify.nodes:
+                raise ValueError("Graphify output is not available for this repository.")
+            selected_nodes, selected_edges, _ = self._query_graphify(repo_id, graphify, query, max_nodes, graphify_mode=graphify_mode)
+            gf_budget = max_nodes * 250
+            mode_label = graphify_mode.upper()
+            strategy = f"Internal Graph Retrieval (Graphify CLI | {mode_label} | Budget: {gf_budget})"
+        else:  # "codegraph"
+            selected_nodes, selected_edges, _ = self._query_codegraph(repo_id, codegraph, query, max_nodes)
+            strategy = "Internal Graph Retrieval (CodeGraph CLI)"
 
-        try:
-            if source_selection == "graphify":
-                if not graphify or not graphify.nodes:
-                    raise ValueError("Graphify output is not available for this repository.")
-                selected_nodes, selected_edges, _ = self._query_graphify(repo_id, graphify, query, max_nodes, graphify_mode=graphify_mode)
-                gf_budget = max_nodes * 250
-                mode_label = graphify_mode.upper()
-                strategy = f"Internal Graph Retrieval (Graphify CLI | {mode_label} | Budget: {gf_budget})"
-            else:  # "codegraph"
-                selected_nodes, selected_edges, _ = self._query_codegraph(repo_id, codegraph, query, max_nodes)
-                strategy = "Internal Graph Retrieval (CodeGraph CLI)"
+        snippets = self._snippets(repo_id, selected_nodes)
+        context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="internal")
+        measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
 
-            snippets = self._snippets(repo_id, selected_nodes)
-            context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="internal")
-            measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
-
-            return GraphRetrievalResult(
-                context=context,
-                snippets=snippets,
-                selected_nodes=selected_nodes,
-                selected_edges=selected_edges,
-                token_measurement=measurement,
-                retrieval_strategy=strategy,
-            )
-        except Exception as cli_exc:
-            # Fallback to Python Advanced Hybrid Scoring System
-            adv_res = self._advanced_hybrid_retrieval(
-                repo_id=repo_id,
-                query=query,
-                max_nodes=max_nodes,
-                source_selection=source_selection,
-                codegraph=codegraph,
-                graphify=graphify
-            )
-            adv_res.retrieval_strategy = f"Python Fallback: {adv_res.retrieval_strategy} (CLI Error: {cli_exc})"
-            return adv_res
+        return GraphRetrievalResult(
+            context=context,
+            snippets=snippets,
+            selected_nodes=selected_nodes,
+            selected_edges=selected_edges,
+            token_measurement=measurement,
+            retrieval_strategy=strategy,
+        )
 
     def _query_graphify(self, repo_id: str, graphify, query: str, max_nodes: int, graphify_mode: str = "bfs") -> tuple[list[GraphNode], list[GraphEdge], bool]:
         """Try external Graphify CLI. Raise an error if it is missing or fails."""
