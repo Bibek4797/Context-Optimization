@@ -9,7 +9,7 @@ def graph_to_pyvis(G: nx.Graph, height: str = "600px", width: str = "100%") -> s
     
     # Calculate degree of each node to dynamically scale sizes
     degrees = dict(G.degree())
-    max_deg = max(degrees.values()) if degrees else 1
+    max_deg = max(degrees.values()) if degrees and max(degrees.values()) > 0 else 1
     
     communities_in_graph = set(nx.get_node_attributes(G, 'community_id').values())
     
