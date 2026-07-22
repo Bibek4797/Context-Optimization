@@ -555,31 +555,43 @@ with main_tabs[2]:
                 )
     
     # 🔍 Retrieval Inspector (Graph Context & Prompts)
-    with st.expander("🔍 Retrieval Inspector (Graph Context & Prompts)", expanded=False):
-        if not st.session_state.get("retrieval_history"):
-            st.info("No queries executed yet. Submit a query to inspect the exact retrieved graph subgraphs, community summaries, and prompt context.")
+    retrieval_hist = st.session_state.get("retrieval_history", [])
+    with st.expander("🔍 Retrieval Inspector (Graph Context & Prompts)", expanded=True if retrieval_hist else False):
+        if not retrieval_hist:
+            st.info("No queries executed yet. Submit a query in chat below to inspect the exact retrieved graph subgraphs, community summaries, and prompt context.")
         else:
-            latest = st.session_state["retrieval_history"][0]
-            st.markdown(f"**Last Query**: `{latest['query']}` (Type: `{latest['type']}` at {latest['timestamp']})")
+            if len(retrieval_hist) == 1:
+                selected_idx = 0
+            else:
+                options = [f"[{h['timestamp']}] {h['type']}: {h['query'][:50]}..." for h in retrieval_hist]
+                selected_opt = st.selectbox("Select query record to inspect", options, index=0)
+                selected_idx = options.index(selected_opt)
+
+            latest = retrieval_hist[selected_idx]
+            st.markdown(f"**Inspecting Query**: `{latest['query']}` (Type: `{latest['type']}` at {latest.get('timestamp', 'N/A')})")
             
-            if latest["type"] == "LangGraph (PDF)":
+            if "LangGraph" in latest.get("type", ""):
                 st.markdown("### 🧩 Retrieved Louvain Communities & Partial Answers")
-                for item in latest["per_comm_details"]:
-                    st.markdown(f"#### 🌐 Community ID: {item['cid']} (Score: {item['score']:.3f})")
-                    st.write(f"**Anchors**: {item['anchors']}")
-                    st.write(f"**Community Summary**:")
-                    st.info(item["summary"])
-                    st.write(f"**Intermediate Partial Answer**:")
-                    st.success(item["partial_answer"])
+                per_comm = latest.get("per_comm_details", [])
+                if not per_comm:
+                    st.warning(latest.get("merged_context_prompt", "No communities retrieved."))
+                else:
+                    for item in per_comm:
+                        st.markdown(f"#### 🌐 Community ID: {item.get('cid', 'N/A')} (Score: {item.get('score', 0.0):.3f})")
+                        st.write(f"**Anchors**: {item.get('anchors', [])}")
+                        st.write(f"**Community Summary**:")
+                        st.info(item.get("summary", ""))
+                        st.write(f"**Intermediate Partial Answer**:")
+                        st.success(item.get("partial_answer", ""))
                 
                 st.markdown("### 📝 Merged Prompt Context (Sent to LLM)")
-                st.code(latest["merged_context_prompt"], language="text")
+                st.code(latest.get("merged_context_prompt", "No context prompt available."), language="text")
                 
-            elif latest["type"] == "CodeGraph (AST)":
+            else:
                 st.markdown("### 🌲 Retrieved AST Codebase Subgraph & Definitions")
-                st.code(latest["context_retrieved"], language="python")
-                st.write("**Synthesized Answer**:")
-                st.success(latest["answer"])
+                st.code(latest.get("context_retrieved", "No explicit source context retrieved."), language="python")
+                st.write("**Synthesized Answer / Status**:")
+                st.success(latest.get("answer", "No answer recorded."))
     
     # Render chat history
     for msg in st.session_state["chat_history"]:

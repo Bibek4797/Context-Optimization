@@ -56,9 +56,21 @@ class AgentHarness:
 
     def query_codegraph(self, query: str) -> str:
         """Use this tool to map functional relationships and dependencies from codebase source files."""
+        if "retrieval_history" not in st.session_state:
+            st.session_state["retrieval_history"] = []
+
         repo_id = st.session_state.get("repo_id")
         if not repo_id:
-            return "Error: No repository uploaded/active. User must upload a repository first."
+            err_msg = "Error: No repository uploaded/active. Please upload a codebase in Tab 0 first."
+            st.session_state["retrieval_history"].insert(0, {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "query": query,
+                "type": "CodeGraph (AST)",
+                "context_retrieved": err_msg,
+                "answer": err_msg
+            })
+            return err_msg
+
         try:
             # Retrieve dynamic configuration from st.session_state (populated from Tab 2)
             source_selection = st.session_state.get("harness_source_selection", "codegraph")
@@ -76,33 +88,54 @@ class AgentHarness:
                 graphify_mode=graphify_mode,
                 max_neighbors=max_neighbors
             )
+
+            # Log CodeGraph retrieval details ALWAYS
+            ctx_retrieved = record.context or (f"Error: {record.error}" if record.status == "failed" else "No explicit source context retrieved.")
+            ans_text = record.answer if record.status == "completed" else f"Error: {record.error}"
+
+            st.session_state["retrieval_history"].insert(0, {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "query": query,
+                "type": f"CodeGraph ({source_selection.upper()})",
+                "context_retrieved": ctx_retrieved,
+                "answer": ans_text
+            })
+
             if record.status == "failed":
                 return f"Error querying CodeGraph: {record.error}"
-                
-            # Log CodeGraph retrieval details
-            if "retrieval_history" not in st.session_state:
-                st.session_state["retrieval_history"] = []
-            
+
+            return f"CodeGraph Answer for '{query}':\n{record.answer}\n\nContext Retrieved:\n{record.context}"
+        except Exception as e:
+            err_msg = f"Exception querying CodeGraph: {str(e)}"
             st.session_state["retrieval_history"].insert(0, {
                 "timestamp": time.strftime("%H:%M:%S"),
                 "query": query,
                 "type": "CodeGraph (AST)",
-                "context_retrieved": record.context or "No explicit source context retrieved.",
-                "answer": record.answer
+                "context_retrieved": err_msg,
+                "answer": err_msg
             })
-            
-            return f"CodeGraph Answer for '{query}':\n{record.answer}\n\nContext Retrieved:\n{record.context}"
-        except Exception as e:
-            return f"Exception querying CodeGraph: {str(e)}"
+            return err_msg
 
     def query_langgraph(self, query: str) -> str:
         """Use this tool strictly for retrieving unstructured knowledge from PDFs using community detection."""
+        if "retrieval_history" not in st.session_state:
+            st.session_state["retrieval_history"] = []
+
         # Check if the unstructured graph exists in session state
         G = st.session_state.get("unstructured_graph")
         comm_sums = st.session_state.get("unstructured_community_summaries")
         
         if G is None or not comm_sums:
-            return "Error: No PDF/unstructured document indexed yet. User must upload and build the PDF graph first."
+            err_msg = "Error: No PDF/unstructured document indexed yet. User must upload and build the PDF graph first."
+            st.session_state["retrieval_history"].insert(0, {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "query": query,
+                "type": "LangGraph (PDF)",
+                "ranked_communities": [],
+                "per_comm_details": [],
+                "merged_context_prompt": err_msg
+            })
+            return err_msg
             
         try:
             from app.services.unstructured.retrieval import run_full_query_pipeline
@@ -114,10 +147,6 @@ class AgentHarness:
             # Save updated cache back
             st.session_state["unstructured_node_embeddings"] = results["updated_node_embeddings_cache"]
             
-            # Log LangGraph retrieval details
-            if "retrieval_history" not in st.session_state:
-                st.session_state["retrieval_history"] = []
-                
             per_comm_details = []
             merged_context_parts = []
             for cid, score in results.get("ranked_communities", []):
@@ -151,7 +180,16 @@ class AgentHarness:
             
             return f"LangGraph Answer for '{query}':\n{results['final_answer']}"
         except Exception as e:
-            return f"Exception querying LangGraph: {str(e)}"
+            err_msg = f"Exception querying LangGraph: {str(e)}"
+            st.session_state["retrieval_history"].insert(0, {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "query": query,
+                "type": "LangGraph (PDF)",
+                "ranked_communities": [],
+                "per_comm_details": [],
+                "merged_context_prompt": err_msg
+            })
+            return err_msg
 
     def spawn_subagent(self, task_description: str, graph_type: str) -> str:
         """Use this tool to delegate massive graph traversals to an isolated context window, returning only a clean text summary to the main loop."""

@@ -27,11 +27,10 @@ EXTENSION_TO_LANGUAGE = {
     ".hpp": "cpp",
 }
 
-CLASS_NODE_TYPES = {"class_definition", "class_declaration", "class", "type_spec", "struct_item"}
+CLASS_NODE_TYPES = {"class_definition", "class_declaration", "type_spec", "struct_item"}
 FUNCTION_NODE_TYPES = {
     "function_definition", "function_declaration", "arrow_function", 
-    "method_definition", "function", "method_declaration", 
-    "function_item"
+    "method_definition", "method_declaration", "function_item"
 }
 IMPORT_NODE_TYPES = {"import_statement", "import_from_statement", "import_spec", "import_declaration", "use_declaration"}
 CALL_NODE_TYPES = {"call", "call_expression", "method_invocation"}
