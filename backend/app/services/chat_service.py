@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from uuid import uuid4
 
+from typing import Any
+
 from app.models.schemas import CountType, QueryRecord, TokenMeasurement
 from app.services.graph_retrieval_service import GraphRetrievalService
 from app.services.llm.base import LLMConfigurationError, LLMProvider
