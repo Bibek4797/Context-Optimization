@@ -148,8 +148,8 @@ def services():
     )
     repo_service = RepoService(storage=storage, analysis_pipeline=pipeline, max_upload_mb=200)
     llm_provider = GeminiProvider(
-        api_key=get_secret("GEMINI_API_KEY"),
-        model=get_secret("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash",
+        api_key="",
+        model="gemini-2.5-flash",
     )
     chat_service = ChatService(
         storage=storage,
@@ -192,13 +192,6 @@ elif provider == "Bedrock":
 
 if provider != "Bedrock":
     default_key = ""
-    if provider == "Gemini":
-        default_key = get_secret("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
-    elif provider == "Groq":
-        default_key = get_secret("GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or ""
-    elif provider == "OpenRouter":
-        default_key = get_secret("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or ""
-
     session_key_name = f"{provider.lower()}_api_key_override"
     if session_key_name not in st.session_state:
         st.session_state[session_key_name] = default_key
@@ -214,9 +207,9 @@ if provider != "Bedrock":
     st.session_state["llm_provider"] = "Gemini" if provider == "Gemini" else f"{provider} ({model})"
     st.session_state["model_name"] = model
 else:
-    default_access = get_secret("AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID") or ""
-    default_secret = get_secret("AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY") or ""
-    default_region = get_secret("AWS_DEFAULT_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    default_access = ""
+    default_secret = ""
+    default_region = "us-east-1"
     
     if "bedrock_access_key_override" not in st.session_state:
         st.session_state["bedrock_access_key_override"] = default_access
