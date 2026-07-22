@@ -60,12 +60,21 @@ class AgentHarness:
         if not repo_id:
             return "Error: No repository uploaded/active. User must upload a repository first."
         try:
-            # We call the underlying CodeGraph QA pipeline
+            # Retrieve dynamic configuration from st.session_state (populated from Tab 2)
+            source_selection = st.session_state.get("harness_source_selection", "codegraph")
+            retrieval_method = st.session_state.get("harness_retrieval_method", "internal")
+            max_nodes = st.session_state.get("harness_max_nodes", 8)
+            graphify_mode = st.session_state.get("harness_graphify_mode", "bfs")
+            max_neighbors = st.session_state.get("harness_max_neighbors", 4)
+
             record = self.chat_service.graph_optimized_qa(
                 repo_id=repo_id,
                 query=query,
-                source_selection="codegraph",
-                retrieval_method="internal"
+                source_selection=source_selection,
+                retrieval_method=retrieval_method,
+                max_nodes=max_nodes,
+                graphify_mode=graphify_mode,
+                max_neighbors=max_neighbors
             )
             if record.status == "failed":
                 return f"Error querying CodeGraph: {record.error}"

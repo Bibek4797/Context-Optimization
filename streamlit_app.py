@@ -498,9 +498,61 @@ with main_tabs[1]:
                 except Exception as e:
                     st.error(f"Could not render LangGraph: {e}")
 
-# --- Tab 2: Master Loop QA ---
 with main_tabs[2]:
     st.subheader("💬 stateless Master Loop QA")
+    
+    # ⚙️ Retrieval & Search Parameters Configurator
+    with st.expander("⚙️ Codebase Retrieval & Search Parameters", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            source_selection_label = st.selectbox(
+                "Default Retrieval System",
+                ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)"],
+                index=0,
+                key="harness_source_selection_ui",
+                help="Choose which graph to query for codebase context."
+            )
+            st.session_state["harness_source_selection"] = "graphify" if "Graphify" in source_selection_label else "codegraph"
+            
+            retrieval_method_label = st.selectbox(
+                "Retrieval Engine",
+                ["Native/Internal CLI (with Python Fallback)", "Advanced Hybrid Scoring (Python)"],
+                index=0,
+                key="harness_retrieval_method_ui",
+                help="Internal CLI uses native command line query engines. Advanced Hybrid uses global PageRank + BM25 search."
+            )
+            st.session_state["harness_retrieval_method"] = "advanced" if "Advanced" in retrieval_method_label else "internal"
+            
+        with c2:
+            st.session_state["harness_max_nodes"] = st.slider(
+                "Max Nodes (Context Budget)",
+                min_value=2,
+                max_value=30,
+                value=8,
+                key="harness_max_nodes_ui",
+                help="Maximum number of node snippets to feed into LLM query context."
+            )
+            
+            # Conditionally render fields
+            if st.session_state["harness_source_selection"] == "graphify":
+                graphify_mode_label = st.radio(
+                    "Graphify Traversal Strategy",
+                    ["Broad Architecture (BFS)", "Deep Execution Path (DFS)"],
+                    index=0,
+                    key="harness_graphify_mode_ui",
+                    help="BFS explores components broadly. DFS follows execution sequences deeply."
+                )
+                st.session_state["harness_graphify_mode"] = "dfs" if "DFS" in graphify_mode_label else "bfs"
+                st.session_state["harness_max_neighbors"] = 4 # default fallback
+            else:
+                st.session_state["harness_max_neighbors"] = st.slider(
+                    "Max Neighbors (AST Hops)",
+                    min_value=1,
+                    max_value=15,
+                    value=4,
+                    key="harness_max_neighbors_ui",
+                    help="Limit on neighboring connections retrieved from the active AST nodes."
+                )
     
     # 🔍 Retrieval Inspector (Graph Context & Prompts)
     with st.expander("🔍 Retrieval Inspector (Graph Context & Prompts)", expanded=False):

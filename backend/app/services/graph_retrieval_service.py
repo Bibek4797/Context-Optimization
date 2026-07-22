@@ -491,52 +491,18 @@ class GraphRetrievalService:
         for edge in all_edges:
             if edge.source_node in selected_ids and edge.target_node in selected_ids:
                 selected_edges_dict[edge.edge_id] = edge
-        selected_edges = list(selected_edges_dict.values())
-
-        # 8. Extract Full snippets for both anchors and neighbors
-        snippets: list[SourceSnippet] = []
-        seen_snippets = set()
-        
-        for node in selected_nodes:
-            code = node_codes.get(node.node_id)
-            if code is None:
-                code = self._read_node_code(repo_id, node, file_cache)
-            node.source_snippet = code
-            
-            if not node.file_path and node.node_type != "cli_output":
-                continue
-            path = node.file_path or node.node_id
-            key = (path, node.line_start, node.line_end)
-            if key not in seen_snippets:
-                seen_snippets.add(key)
-                
-                role = "anchor" if node.node_id in selected_anchors else "neighbor"
-                snippets.append(
-                    SourceSnippet(
-                        file_path=path,
-                        line_start=node.line_start or 1,
-                        line_end=node.line_end or node.line_start or 1,
-                        text=code,
-                        source=f"graph_{role}",
-                    )
-                )
-
-        context = self._format_advanced_context(
-            anchors=list(selected_anchors.values()),
-            neighbors=list(selected_neighbors.values()),
-            connections=connections_info,
-            snippets=snippets
+        selected_edges = list(selected_edges_dict.values())        # ── Advanced Hybrid Scoring ──
+        return self._advanced_hybrid_retrieval(
+            repo_id=repo_id,
+            query=query,
+            max_nodes=max_nodes,
+            source_selection=source_selection,
+            codegraph=codegraph,
+            graphify=graphify,
+            max_anchors=max_anchors,
+            max_neighbors=max_neighbors
         )
-        measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
-        
-        return GraphRetrievalResult(
-            context=context,
-            snippets=snippets,
-            selected_nodes=selected_nodes,
-            selected_edges=selected_edges,
-            token_measurement=measurement,
-            retrieval_strategy="Advanced Hybrid Scoring System (BM25 + PageRank + EdgeRank + LineMatch)",
-        )
+
     def _internal_retrieval(
         self, repo_id: str, query: str, max_nodes: int,
         source_selection: str, codegraph, graphify,
@@ -545,35 +511,47 @@ class GraphRetrievalService:
         """Route to the native query engine of CodeGraph / Graphify based on source_selection.
 
         Only uses the external CLI tools (graphify CLI or CodeGraph Node.js).
-        If the CLI fails, the exception is propagated so the user can see exactly why it failed.
+        If the CLI fails, it falls back to the Python Advanced Hybrid Scoring System.
         """
         selected_nodes: list[GraphNode] = []
         selected_edges: list[GraphEdge] = []
 
-        if source_selection == "graphify":
-            if not graphify or not graphify.nodes:
-                raise ValueError("Graphify output is not available for this repository.")
-            selected_nodes, selected_edges, _ = self._query_graphify(repo_id, graphify, query, max_nodes, graphify_mode=graphify_mode)
-            gf_budget = max_nodes * 250
-            mode_label = graphify_mode.upper()
-            strategy = f"Internal Graph Retrieval (Graphify CLI | {mode_label} | Budget: {gf_budget})"
+        try:
+            if source_selection == "graphify":
+                if not graphify or not graphify.nodes:
+                    raise ValueError("Graphify output is not available for this repository.")
+                selected_nodes, selected_edges, _ = self._query_graphify(repo_id, graphify, query, max_nodes, graphify_mode=graphify_mode)
+                gf_budget = max_nodes * 250
+                mode_label = graphify_mode.upper()
+                strategy = f"Internal Graph Retrieval (Graphify CLI | {mode_label} | Budget: {gf_budget})"
+            else:  # "codegraph"
+                selected_nodes, selected_edges, _ = self._query_codegraph(repo_id, codegraph, query, max_nodes)
+                strategy = "Internal Graph Retrieval (CodeGraph CLI)"
 
-        else:  # "codegraph"
-            selected_nodes, selected_edges, _ = self._query_codegraph(repo_id, codegraph, query, max_nodes)
-            strategy = "Internal Graph Retrieval (CodeGraph CLI)"
+            snippets = self._snippets(repo_id, selected_nodes)
+            context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="internal")
+            measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
 
-        snippets = self._snippets(repo_id, selected_nodes)
-        context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="internal")
-        measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
-
-        return GraphRetrievalResult(
-            context=context,
-            snippets=snippets,
-            selected_nodes=selected_nodes,
-            selected_edges=selected_edges,
-            token_measurement=measurement,
-            retrieval_strategy=strategy,
-        )
+            return GraphRetrievalResult(
+                context=context,
+                snippets=snippets,
+                selected_nodes=selected_nodes,
+                selected_edges=selected_edges,
+                token_measurement=measurement,
+                retrieval_strategy=strategy,
+            )
+        except Exception as cli_exc:
+            # Fallback to Python Advanced Hybrid Scoring System
+            adv_res = self._advanced_hybrid_retrieval(
+                repo_id=repo_id,
+                query=query,
+                max_nodes=max_nodes,
+                source_selection=source_selection,
+                codegraph=codegraph,
+                graphify=graphify
+            )
+            adv_res.retrieval_strategy = f"Python Fallback: {adv_res.retrieval_strategy} (CLI Error: {cli_exc})"
+            return adv_res
 
     def _query_graphify(self, repo_id: str, graphify, query: str, max_nodes: int, graphify_mode: str = "bfs") -> tuple[list[GraphNode], list[GraphEdge], bool]:
         """Try external Graphify CLI. Raise an error if it is missing or fails."""
@@ -886,4 +864,244 @@ class GraphRetrievalService:
             lines.append("---")
             
         return "\n".join(lines)
+
+    def _advanced_hybrid_retrieval(
+        self, repo_id: str, query: str, max_nodes: int,
+        source_selection: str, codegraph, graphify,
+        max_anchors: int | None = None, max_neighbors: int | None = None,
+    ) -> GraphRetrievalResult:
+        # Source Selection and Dynamic Graph Loading
+        if source_selection == "graphify" and graphify:
+            all_nodes = graphify.nodes
+            all_edges = graphify.edges
+        else: # "codegraph"
+            all_nodes = codegraph.nodes
+            all_edges = codegraph.edges
+
+        # 1. Base limits mapping
+        if max_nodes <= 8:
+            base_anchors, base_neighbors = 2, 4
+        elif max_nodes <= 14:
+            base_anchors, base_neighbors = 4, 8
+        else:
+            base_anchors, base_neighbors = 8, 16
+
+        # Dynamically scale actual limits based on total nodes (N) in the active repository graph
+        N = len(all_nodes)
+        if N <= 100:
+            scale_factor = 0.5
+        elif N <= 1000:
+            scale_factor = 1.0
+        elif N <= 5000:
+            scale_factor = 2.0
+        else:
+            scale_factor = 3.0
+
+        if max_anchors is not None:
+            actual_max_anchors = max_anchors
+        else:
+            actual_max_anchors = max(2, int(base_anchors * scale_factor))
+
+        if max_neighbors is not None:
+            actual_max_neighbors = max_neighbors
+        else:
+            actual_max_neighbors = max(4, int(base_neighbors * scale_factor))
+
+        # 2. Run global PageRank centrality scoring (independent of query)
+        pr_map = self._compute_pagerank(all_nodes, all_edges)
+        sorted_by_pr = sorted(all_nodes, key=lambda n: pr_map.get(n.node_id, 0.0), reverse=True)
+        pr_ranks = {node.node_id: idx + 1 for idx, node in enumerate(sorted_by_pr)}
+        
+        pr_scores = {}
+        for node in all_nodes:
+            rank = pr_ranks[node.node_id]
+            pr_scores[node.node_id] = 10.0 * (1.0 - (rank - 1) / N) if N > 1 else 10.0
+
+        # Read every node's code snippet to build BM25 corpus (truncate to 2000 chars to save memory/CPU)
+        file_cache: dict[str, list[str]] = {}
+        node_codes: dict[str, str] = {}
+        for node in all_nodes:
+            node_codes[node.node_id] = self._read_node_code(repo_id, node, file_cache, max_chars=2000)
+
+        # 3. BM25 scoring (query-dependent)
+        query_terms = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query) if len(t) > 1]
+        
+        # Calculate document frequencies for terms and fast document lengths
+        doc_freqs = {term: 0 for term in query_terms}
+        corpus_tokens = {}
+        doc_lens = {}
+        total_len = 0
+        
+        for node in all_nodes:
+            nid = node.node_id
+            code = node_codes[nid]
+            if not code:
+                doc_lens[nid] = 0
+                continue
+            
+            # Fast document length estimation
+            d_len = len(code.split())
+            doc_lens[nid] = d_len
+            total_len += d_len
+            
+            # Normalize tokens
+            tokens = set(t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", code))
+            corpus_tokens[nid] = tokens
+            for term in query_terms:
+                if term in tokens:
+                    doc_freqs[term] += 1
+                    
+        avg_doc_len = (total_len / N) if N > 0 else 1.0
+        
+        # Calculate TF-IDF / BM25
+        k1 = 1.2
+        b = 0.75
+        bm25_scores = {}
+        
+        import math
+        for node in all_nodes:
+            nid = node.node_id
+            score = 0.0
+            tokens = corpus_tokens.get(nid, set())
+            d_len = doc_lens.get(nid, 0)
+            
+            for term in query_terms:
+                if term in tokens:
+                    # BM25 IDF
+                    df = doc_freqs[term]
+                    idf = math.log((N - df + 0.5) / (df + 0.5) + 1.0)
+                    
+                    # Term frequency inside document
+                    code = node_codes[nid]
+                    tf = code.lower().count(term)
+                    
+                    # Score contribution
+                    tf_scaled = (tf * (k1 + 1)) / (tf + k1 * (1.0 - b + b * (d_len / avg_doc_len)))
+                    score += idf * tf_scaled
+                    
+            bm25_scores[nid] = score
+
+        # 4. Synthesize final scores (Linear Combination)
+        w_bm25 = 0.65
+        w_pr = 0.35
+        node_scores = {}
+        for node in all_nodes:
+            nid = node.node_id
+            # Normalize BM25 score
+            raw_bm25 = bm25_scores.get(nid, 0.0)
+            node_scores[nid] = (w_bm25 * raw_bm25) + (w_pr * pr_scores.get(nid, 0.0))
+
+        # Sort and select top anchor nodes
+        anchors_list = sorted(all_nodes, key=lambda n: node_scores.get(n.node_id, 0.0), reverse=True)
+        selected_anchors = {}
+        for node in anchors_list[:actual_max_anchors]:
+            selected_anchors[node.node_id] = node
+
+        # 5. Graph Neighborhood Expansion (EdgeRank)
+        # Select neighboring nodes directly connected to selected anchors
+        adjacency: dict[str, list[tuple[str, str, float]]] = {}
+        for edge in all_edges:
+            src = edge.source_node
+            tgt = edge.target_node
+            score = edge.score or 0.5
+            adjacency.setdefault(src, []).append((tgt, edge.edge_type, score))
+            adjacency.setdefault(tgt, []).append((src, edge.edge_type, score))
+
+        neighbor_candidates = {}
+        connections_info = []
+        for anchor_id in selected_anchors:
+            for neighbor_id, rel_type, rel_score in adjacency.get(anchor_id, []):
+                if neighbor_id in selected_anchors:
+                    # Log connection details between anchors
+                    connections_info.append({
+                        "anchor": anchor_id,
+                        "neighbor": neighbor_id,
+                        "edge_type": rel_type
+                    })
+                    continue
+                if neighbor_id not in neighbor_candidates:
+                    # Find candidate node
+                    candidate = next((n for n in all_nodes if n.node_id == neighbor_id), None)
+                    if candidate:
+                        neighbor_candidates[neighbor_id] = {
+                            "node": candidate,
+                            "rel_score": rel_score,
+                            "rel_type": rel_type,
+                            "anchor": selected_anchors[anchor_id].label
+                        }
+                else:
+                    # Keep connection with highest score
+                    if rel_score > neighbor_candidates[neighbor_id]["rel_score"]:
+                        neighbor_candidates[neighbor_id]["rel_score"] = rel_score
+                        neighbor_candidates[neighbor_id]["rel_type"] = rel_type
+                        neighbor_candidates[neighbor_id]["anchor"] = selected_anchors[anchor_id].label
+
+        # Sort and select top neighbors
+        neighbors_list = sorted(
+            neighbor_candidates.values(),
+            key=lambda x: (x["rel_score"], node_scores.get(x["node"].node_id, 0.0)),
+            reverse=True
+        )
+        selected_neighbors = {}
+        for item in neighbors_list[:actual_max_neighbors]:
+            node = item["node"]
+            selected_neighbors[node.node_id] = node
+            connections_info.append({
+                "anchor": item["anchor"],
+                "neighbor": node.label,
+                "edge_type": item["rel_type"]
+            })
+
+        # 6. Synthesize context matching token budget
+        selected_nodes = list(selected_anchors.values()) + list(selected_neighbors.values())
+        
+        # Extract matching edges
+        selected_node_ids = set(selected_anchors.keys()) | set(selected_neighbors.keys())
+        selected_edges = []
+        for edge in all_edges:
+            if edge.source_node in selected_node_ids and edge.target_node in selected_node_ids:
+                selected_edges.append(edge)
+
+        # Gather source code snippets
+        seen_snippets = set()
+        snippets = []
+        for node in selected_nodes:
+            code = node_codes.get(node.node_id)
+            if code is None:
+                code = self._read_node_code(repo_id, node, file_cache)
+            node.source_snippet = code
+            
+            if not node.file_path and node.node_type != "cli_output":
+                continue
+            path = node.file_path or node.node_id
+            key = (path, node.line_start, node.line_end)
+            if key not in seen_snippets:
+                seen_snippets.add(key)
+                role = "anchor" if node.node_id in selected_anchors else "neighbor"
+                snippets.append(
+                    SourceSnippet(
+                        file_path=path,
+                        line_start=node.line_start or 1,
+                        line_end=node.line_end or node.line_start or 1,
+                        text=code,
+                        source=f"graph_{role}",
+                    )
+                )
+
+        context = self._format_advanced_context(
+            anchors=list(selected_anchors.values()),
+            neighbors=list(selected_neighbors.values()),
+            connections=connections_info,
+            snippets=snippets
+        )
+        measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
+        
+        return GraphRetrievalResult(
+            context=context,
+            snippets=snippets,
+            selected_nodes=selected_nodes,
+            selected_edges=selected_edges,
+            token_measurement=measurement,
+            retrieval_strategy="Advanced Hybrid Scoring System (BM25 + PageRank + EdgeRank + LineMatch)",
+        )
 
