@@ -3,42 +3,115 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-import textwrap
 import re
-import difflib
-import hashlib
+import time
 from pathlib import Path
 from uuid import uuid4
-
 import streamlit as st
+import networkx as nx
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = PROJECT_ROOT / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.models.schemas import GraphDocument, QueryRecord, RepoMetadata, TreeNode  # noqa: E402
-from app.services.analysis_pipeline import AnalysisPipeline  # noqa: E402
-from app.services.chat_service import ChatService  # noqa: E402
-from app.services.codegraph_service import CodeGraphService  # noqa: E402
-from app.services.file_utils import clean_repo_name, safe_extract_zip  # noqa: E402
-from app.services.graph_retrieval_service import GraphRetrievalService  # noqa: E402
-from app.services.graphify_service import GraphifyService  # noqa: E402
-from app.services.llm.gemini import GeminiProvider  # noqa: E402
-from app.services.llm.openai_compatible import GroqProvider, OpenRouterProvider  # noqa: E402
-from app.services.llm.bedrock import BedrockProvider  # noqa: E402
-from app.services.repo_service import RepoService  # noqa: E402
-from app.services.storage import LocalStorage  # noqa: E402
-from app.services.token_service import TokenService  # noqa: E402
-from app.services.tree_sitter_service import TreeSitterService  # noqa: E402
+from app.models.schemas import GraphDocument, QueryRecord, RepoMetadata, TreeNode
+from app.services.analysis_pipeline import AnalysisPipeline
+from app.services.chat_service import ChatService
+from app.services.codegraph_service import CodeGraphService
+from app.services.file_utils import clean_repo_name, safe_extract_zip
+from app.services.graph_retrieval_service import GraphRetrievalService
+from app.services.graphify_service import GraphifyService
+from app.services.llm.gemini import GeminiProvider
+from app.services.llm.openai_compatible import GroqProvider, OpenRouterProvider
+from app.services.llm.bedrock import BedrockProvider
+from app.services.repo_service import RepoService
+from app.services.storage import LocalStorage
+from app.services.token_service import TokenService
+from app.services.tree_sitter_service import TreeSitterService
 
+# Custom unstructured service imports
+from app.services.unstructured.documents import process_uploaded_files
+from app.services.unstructured.graph_builder import build_graph_from_documents
+from app.services.unstructured.communities import detect_communities, summarize_all_communities
+from app.services.unstructured.visualization import graph_to_pyvis
+from app.services.agent_harness import AgentHarness
 
 st.set_page_config(
-    page_title="Context Optimization Engine",
+    page_title="Harness Execution Engine",
+    page_icon="🕸️",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded"
 )
 
+# Custom styles injection for high-end dark radial gradient
+st.markdown(
+    """
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+    .block-container {
+        padding-top: 2rem !important;
+        padding-left: 3rem !important;
+        padding-right: 3rem !important;
+        max-width: 96% !important;
+    }
+    .stApp {
+        background: radial-gradient(circle at 50% 50%, #0d0e15 0%, #050608 100%) !important;
+        color: #e2e8f0 !important;
+        font-family: 'Inter', -apple-system, sans-serif !important;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Outfit', sans-serif !important;
+    }
+    .title-gradient {
+        background: linear-gradient(135deg, #6366F1 0%, #60EFFF 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 800 !important;
+        letter-spacing: -0.5px !important;
+        margin-bottom: 25px !important;
+    }
+    [data-testid="stSidebar"] {
+        background-color: rgba(13, 14, 21, 0.95) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+    }
+    div[data-baseweb="tab-list"] {
+        background-color: rgba(255, 255, 255, 0.02) !important;
+        border-radius: 12px !important;
+        padding: 6px !important;
+        border: 1px solid rgba(255, 255, 255, 0.05) !important;
+        gap: 8px !important;
+    }
+    button[data-baseweb="tab"] {
+        background-color: transparent !important;
+        color: #a0aec0 !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 10px 24px !important;
+        font-weight: 600 !important;
+        font-family: 'Outfit', sans-serif !important;
+        transition: all 0.2s ease-in-out !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background: rgba(99, 102, 241, 0.12) !important;
+        color: #6366f1 !important;
+        border: 1px solid rgba(99, 102, 241, 0.3) !important;
+    }
+    .todo-completed {
+        color: #10B981 !important;
+        font-weight: 600;
+    }
+    .todo-inprogress {
+        color: #60EFFF !important;
+        font-style: italic;
+    }
+    .todo-pending {
+        color: #a0aec0 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 def get_secret(name: str, default: str | None = None) -> str | None:
     env_value = os.getenv(name)
@@ -54,52 +127,8 @@ def get_secret(name: str, default: str | None = None) -> str | None:
     except Exception:
         return default
 
-
-def ensure_node_dependencies() -> None:
-    """Ensure that the Node.js package @colbymchenry/codegraph is installed."""
-    import subprocess
-    import shutil
-    
-    if not shutil.which("node"):
-        return
-        
-    try:
-        # Check if require('@colbymchenry/codegraph') works
-        proc = subprocess.run(
-            ["node", "-e", "require('@colbymchenry/codegraph')"],
-            capture_output=True,
-            text=True,
-            cwd=str(PROJECT_ROOT)
-        )
-        if proc.returncode != 0:
-            # Try with the --experimental-sqlite flag in case Node 22 requires it
-            proc = subprocess.run(
-                ["node", "--experimental-sqlite", "-e", "require('@colbymchenry/codegraph')"],
-                capture_output=True,
-                text=True,
-                cwd=str(PROJECT_ROOT)
-            )
-        if proc.returncode == 0:
-            return
-    except Exception:
-        return
-
-    # If not installed, run npm install
-    if shutil.which("npm"):
-        try:
-            subprocess.run(
-                ["npm", "install", "--no-save", "@colbymchenry/codegraph"],
-                cwd=str(PROJECT_ROOT),
-                capture_output=True,
-                timeout=60
-            )
-        except Exception:
-            pass
-
-
 @st.cache_resource
 def services():
-    ensure_node_dependencies()
     data_dir_value = get_secret("CONTEXT_ENGINE_DATA_DIR") or os.getenv("CONTEXT_ENGINE_DATA_DIR")
     data_dir = Path(data_dir_value) if data_dir_value else PROJECT_ROOT / "data"
     if not data_dir.is_absolute():
@@ -132,105 +161,106 @@ def services():
 
     return storage, pipeline, repo_service, chat_service, llm_provider
 
+storage, pipeline, repo_service, chat_service, base_llm_provider = services()
 
-storage, pipeline, repo_service, chat_service, llm_provider = services()
+# ── Sidebar Configurations (The Brain & Keys) ──
 
+st.sidebar.title("🧠 Configuration & Brain")
 
-# ── Streamlit Performance Cache Layers ──
+provider = st.sidebar.selectbox(
+    "LLM Provider",
+    ["Gemini", "Groq", "OpenRouter", "Bedrock"],
+    key="llm_provider_select"
+)
 
-@st.cache_resource(show_spinner=False)
-def cached_load_codegraph(repo_id: str, updated_at: str) -> GraphDocument | None:
-    try:
-        graph = storage.load_codegraph(repo_id)
-        if graph:
-            from app.services.graph_retrieval_service import GraphRetrievalService
-            from app.services.token_service import TokenService
-            retrieval_service = GraphRetrievalService(storage, TokenService())
-            file_cache = {}
-            for node in graph.nodes:
-                node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache, max_chars=1000)
-        return graph
-    except Exception:
-        try:
-            return storage.load_codegraph(repo_id)
-        except Exception:
-            return None
+# API key / Credential inputs
+api_key = ""
+aws_access_key = ""
+aws_secret_key = ""
+aws_region = "us-east-1"
+model = ""
 
-@st.cache_resource(show_spinner=False)
-def cached_load_graphify(repo_id: str, updated_at: str) -> GraphDocument | None:
-    try:
-        graph = storage.load_graphify(repo_id)
-        if graph:
-            from app.services.graph_retrieval_service import GraphRetrievalService
-            from app.services.token_service import TokenService
-            retrieval_service = GraphRetrievalService(storage, TokenService())
-            file_cache = {}
-            for node in graph.nodes:
-                node.source_snippet = retrieval_service._read_node_code(repo_id, node, file_cache, max_chars=1000)
-        return graph
-    except Exception:
-        try:
-            return storage.load_graphify(repo_id)
-        except Exception:
-            return None
+# Handle provider default models
+if provider == "Gemini":
+    model = st.sidebar.selectbox("Gemini Model", ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"])
+elif provider == "Groq":
+    model = st.sidebar.selectbox("Groq Model", ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"])
+elif provider == "OpenRouter":
+    model = st.sidebar.selectbox("OpenRouter Model", ["meta-llama/llama-3.3-70b-instruct:free"])
+elif provider == "Bedrock":
+    model = st.sidebar.selectbox("Bedrock Model", ["anthropic.claude-3-5-sonnet-20241022-v2:0", "amazon.nova-lite-v1:0"])
 
-@st.cache_data(show_spinner=False)
-def cached_load_files_df(repo_id: str, updated_at: str) -> list[dict]:
-    files = storage.load_files(repo_id)
-    if not files:
-        return []
-    return [file.model_dump() for file in files]
+if provider != "Bedrock":
+    default_key = ""
+    if provider == "Gemini":
+        default_key = get_secret("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
+    elif provider == "Groq":
+        default_key = get_secret("GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or ""
+    elif provider == "OpenRouter":
+        default_key = get_secret("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or ""
 
-@st.cache_data(show_spinner=False)
-def cached_get_graph_dot(repo_id: str, kind: str, updated_at: str, max_nodes: int = 80, max_edges: int = 160) -> str:
-    graph = cached_load_codegraph(repo_id, updated_at) if kind == "codegraph" else cached_load_graphify(repo_id, updated_at)
-    if not graph:
-        return ""
-    return graph_to_dot(graph, max_nodes=max_nodes, max_edges=max_edges)
+    session_key_name = f"{provider.lower()}_api_key_override"
+    if session_key_name not in st.session_state:
+        st.session_state[session_key_name] = default_key
+        
+    api_key = st.sidebar.text_input(
+        f"{provider} API Key",
+        value=st.session_state[session_key_name],
+        type="password",
+        key=f"api_key_input_{provider.lower()}"
+    )
+    st.session_state[session_key_name] = api_key
+    st.session_state["api_key"] = api_key
+    st.session_state["llm_provider"] = "Gemini" if provider == "Gemini" else f"{provider} ({model})"
+    st.session_state["model_name"] = model
+else:
+    default_access = get_secret("AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID") or ""
+    default_secret = get_secret("AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY") or ""
+    default_region = get_secret("AWS_DEFAULT_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    
+    if "bedrock_access_key_override" not in st.session_state:
+        st.session_state["bedrock_access_key_override"] = default_access
+    if "bedrock_secret_key_override" not in st.session_state:
+        st.session_state["bedrock_secret_key_override"] = default_secret
+    if "bedrock_region_override" not in st.session_state:
+        st.session_state["bedrock_region_override"] = default_region
+        
+    aws_access_key = st.sidebar.text_input("AWS Access Key ID", value=st.session_state["bedrock_access_key_override"], type="password")
+    aws_secret_key = st.sidebar.text_input("AWS Secret Access Key", value=st.session_state["bedrock_secret_key_override"], type="password")
+    aws_region = st.sidebar.text_input("AWS Region", value=st.session_state["bedrock_region_override"])
+    
+    st.session_state["bedrock_access_key_override"] = aws_access_key
+    st.session_state["bedrock_secret_key_override"] = aws_secret_key
+    st.session_state["bedrock_region_override"] = aws_region
+    
+    st.session_state["aws_access_key"] = aws_access_key
+    st.session_state["aws_secret_key"] = aws_secret_key
+    st.session_state["aws_region"] = aws_region
+    st.session_state["llm_provider"] = "Amazon Bedrock"
+    st.session_state["model_name"] = model
 
-@st.cache_data(show_spinner=False)
-def cached_get_graph_nodes_df(repo_id: str, kind: str, updated_at: str) -> list[dict]:
-    graph = cached_load_codegraph(repo_id, updated_at) if kind == "codegraph" else cached_load_graphify(repo_id, updated_at)
-    if not graph:
-        return []
-    return [node.model_dump() for node in graph.nodes]
+# Instantiate dynamic LLM Provider matching sidebar configuration
+def get_configured_llm_provider():
+    if provider == "Gemini":
+        return GeminiProvider(api_key=api_key, model=model)
+    elif provider == "Groq":
+        return GroqProvider(api_key=api_key, model=model)
+    elif provider == "OpenRouter":
+        return OpenRouterProvider(api_key=api_key, model=model)
+    elif provider == "Bedrock":
+        return BedrockProvider(
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            aws_region=aws_region,
+            model=model
+        )
+    return base_llm_provider
 
-@st.cache_data(show_spinner=False)
-def cached_get_graph_edges_df(repo_id: str, kind: str, updated_at: str) -> list[dict]:
-    graph = cached_load_codegraph(repo_id, updated_at) if kind == "codegraph" else cached_load_graphify(repo_id, updated_at)
-    if not graph:
-        return []
-    return [edge.model_dump() for edge in graph.edges]
+# Update chat_service's llm provider dynamically
+active_llm = get_configured_llm_provider()
+chat_service.llm_provider = active_llm
 
-@st.cache_data(show_spinner=False)
-def cached_load_queries(repo_id: str, queries_dir_path: str, count: int) -> list:
-    from app.models.schemas import QueryRecord
-    import json
-    queries_dir = Path(queries_dir_path)
-    queries = []
-    if queries_dir.exists():
-        for file_path in queries_dir.glob("*.json"):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    queries.append(QueryRecord.model_validate(data))
-            except Exception:
-                pass
-    return sorted(queries, key=lambda q: q.created_at)
-
-
-def current_repo() -> RepoMetadata | None:
-    repo_id = st.session_state.get("repo_id")
-    if not repo_id:
-        return None
-    return storage.load_repo_metadata(repo_id)
-
-
-def set_repo(repo: RepoMetadata) -> None:
-    st.session_state.repo_id = repo.repo_id
-    st.session_state.selected_file = None
-
-
+# Ingest ZIP / files helpers
 def ingest_uploaded_zip(uploaded_file) -> RepoMetadata:
     repo_id = uuid4().hex
     repo_name = clean_repo_name(Path(uploaded_file.name).stem)
@@ -243,11 +273,8 @@ def ingest_uploaded_zip(uploaded_file) -> RepoMetadata:
     safe_extract_zip(upload_path, source_dir)
     return pipeline.analyze_existing(name=repo_name, source_dir=source_dir, origin="upload", repo_id=repo_id)
 
-
 def ingest_uploaded_files(uploaded_files) -> RepoMetadata:
-    """Ingest one or more individual code files (not zipped)."""
     repo_id = uuid4().hex
-    # Name the repo after the first file or "uploaded_files"
     if len(uploaded_files) == 1:
         repo_name = clean_repo_name(Path(uploaded_files[0].name).stem)
     else:
@@ -260,1655 +287,249 @@ def ingest_uploaded_files(uploaded_files) -> RepoMetadata:
         dest.write_bytes(f.getbuffer())
     return pipeline.analyze_existing(name=repo_name, source_dir=source_dir, origin="file_upload", repo_id=repo_id)
 
-
-def metric_row(repo: RepoMetadata) -> None:
-    cols = st.columns(4)
-    cols[0].metric("Total files", repo.stats.total_files)
-    cols[1].metric("Python files", repo.stats.python_files)
-    cols[2].metric("Total lines", repo.stats.total_lines)
-    cols[3].metric("Python lines", repo.stats.python_lines)
-
-
-def get_active_llm_provider() -> LLMProvider:
-    provider = st.session_state.get("llm_provider_select", "Gemini")
-    
-    # Get model
-    selected_option = st.session_state.get(f"model_select_{provider.lower()}", "Custom Model...")
-    if selected_option == "Custom Model...":
-        model = st.session_state.get(f"custom_model_{provider.lower()}", "")
-    else:
-        model = selected_option
-        
-    if model and " (Latest Free-Tier)" in model:
-        model = model.replace(" (Latest Free-Tier)", "").strip()
-        
-    if not model:
-        if provider == "Gemini":
-            model = "gemini-2.5-flash"
-        elif provider == "Groq":
-            model = "llama-3.3-70b-versatile"
-        elif provider == "OpenRouter":
-            model = "meta-llama/llama-3.3-70b-instruct:free"
-        elif provider == "Bedrock":
-            model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
-            
-    if provider == "Bedrock":
-        aws_access_key = st.session_state.get("bedrock_access_key_override", "")
-        aws_secret_key = st.session_state.get("bedrock_secret_key_override", "")
-        aws_region = st.session_state.get("bedrock_region_override", "us-east-1")
-        return BedrockProvider(
-            aws_access_key_id=aws_access_key,
-            aws_secret_access_key=aws_secret_key,
-            aws_region=aws_region,
-            model=model
-        )
-        
-    api_key = st.session_state.get(f"{provider.lower()}_api_key_override", "")
-    if provider == "Gemini":
-        return GeminiProvider(api_key=api_key, model=model)
-    elif provider == "Groq":
-        return GroqProvider(api_key=api_key, model=model)
-    elif provider == "OpenRouter":
-        return OpenRouterProvider(api_key=api_key, model=model)
-        
-    return GeminiProvider(api_key=api_key, model=model)
-
-
-def render_status(repo: RepoMetadata | None) -> None:
-    st.sidebar.subheader("LLM Configuration")
-    
-    # Provider selectbox
-    provider = st.sidebar.selectbox("LLM Provider", ["Gemini", "Groq", "OpenRouter", "Bedrock"], key="llm_provider_select")
-    
-    # API key / Credential inputs
-    api_key = ""
-    aws_access_key = ""
-    aws_secret_key = ""
-    aws_region = "us-east-1"
-    
-    if provider != "Bedrock":
-        default_key = ""
-        if provider == "Gemini":
-            default_key = get_secret("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
-        elif provider == "Groq":
-            default_key = get_secret("GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or ""
-        elif provider == "OpenRouter":
-            default_key = get_secret("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or ""
-
-        session_key_name = f"{provider.lower()}_api_key_override"
-        if session_key_name not in st.session_state:
-            st.session_state[session_key_name] = default_key
-            
-        api_key = st.sidebar.text_input(
-            f"{provider} API Key",
-            value=st.session_state[session_key_name],
-            type="password",
-            key=f"api_key_input_{provider.lower()}"
-        )
-        st.session_state[session_key_name] = api_key
-    else:
-        # Bedrock credentials
-        default_access = get_secret("AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID") or ""
-        default_secret = get_secret("AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY") or ""
-        default_region = get_secret("AWS_DEFAULT_REGION") or os.getenv("AWS_DEFAULT_REGION") or get_secret("AWS_REGION") or os.getenv("AWS_REGION") or "us-east-1"
-        
-        if "bedrock_access_key_override" not in st.session_state:
-            st.session_state["bedrock_access_key_override"] = default_access
-        if "bedrock_secret_key_override" not in st.session_state:
-            st.session_state["bedrock_secret_key_override"] = default_secret
-        if "bedrock_region_override" not in st.session_state:
-            st.session_state["bedrock_region_override"] = default_region
-            
-        aws_access_key = st.sidebar.text_input(
-            "AWS Access Key ID",
-            value=st.session_state["bedrock_access_key_override"],
-            type="password",
-            key="bedrock_access_input"
-        )
-        aws_secret_key = st.sidebar.text_input(
-            "AWS Secret Access Key",
-            value=st.session_state["bedrock_secret_key_override"],
-            type="password",
-            key="bedrock_secret_input"
-        )
-        aws_region = st.sidebar.text_input(
-            "AWS Region",
-            value=st.session_state["bedrock_region_override"],
-            key="bedrock_region_input"
-        )
-        
-        st.session_state["bedrock_access_key_override"] = aws_access_key
-        st.session_state["bedrock_secret_key_override"] = aws_secret_key
-        st.session_state["bedrock_region_override"] = aws_region
-        
-    # Model selectbox
-    models_dict = {
-        "Gemini": [
-            "gemini-2.5-flash (Latest Free-Tier)",
-            "gemini-1.5-flash",
-            "Custom Model..."
-        ],
-        "Groq": [
-            "llama-3.3-70b-versatile (Latest Free-Tier)",
-            "llama-3.1-8b-instant",
-            "Custom Model..."
-        ],
-        "OpenRouter": [
-            "meta-llama/llama-3.3-70b-instruct:free (Latest Free-Tier)",
-            "google/gemini-2.5-flash:free",
-            "Custom Model..."
-        ],
-        "Bedrock": [
-            "anthropic.claude-3-5-sonnet-20241022-v2:0",
-            "anthropic.claude-3-haiku-20240307-v1:0",
-            "Custom Model..."
-        ]
-    }
-    
-    model_options = models_dict[provider]
-    selected_model_option = st.sidebar.selectbox("Model", model_options, key=f"model_select_{provider.lower()}")
-    
-    if selected_model_option == "Custom Model...":
-        selected_model = st.sidebar.text_input("Enter Model Name", value="", key=f"custom_model_{provider.lower()}")
-    else:
-        selected_model = selected_model_option
-        if " (Latest Free-Tier)" in selected_model:
-            selected_model = selected_model.replace(" (Latest Free-Tier)", "").strip()
-        
-    key_configured = bool(aws_access_key and aws_secret_key) if provider == "Bedrock" else bool(api_key)
-    st.sidebar.subheader("Status")
-    st.sidebar.write(f"Repo: **{repo.name if repo else 'none'}**")
-    st.sidebar.write(f"Pipeline: **{repo.status if repo else 'idle'}**")
-    st.sidebar.write(f"Model: **{selected_model if selected_model else 'none'}**")
-    st.sidebar.write(f"Key configured: **{'yes' if key_configured else 'no'}**")
-    
-    st.sidebar.subheader("Codebase Rectifier")
-    st.session_state.rectify_enabled = st.sidebar.checkbox(
-        "🔍 Enable Error Rectification",
-        value=False,
-        help="When enabled, the assistant will propose direct code modifications when bugs or errors are identified, allowing you to overwrite files with a single click."
-    )
-
-
-def render_notice(message: str) -> None:
-    if "Graphify" in message and "fallback" in message.lower():
-        st.info(message)
-        return
-    st.warning(message)
-
-
-
-
-
-def render_upload_import(repo: RepoMetadata | None) -> None:
-    st.header("Upload Or Import")
-
-    SUPPORTED_EXTENSIONS = [
-        "py", "pyi", "js", "jsx", "ts", "tsx",
-        "go", "rs", "java", "c", "cpp", "cc", "cxx", "h", "hpp",
-    ]
-
-    left, right = st.columns(2)
-    with left:
-        st.subheader("📤 Upload Codebase")
-        st.caption("Upload a `.zip` repository archive or individual source files directly.")
-        uploaded_files = st.file_uploader(
-            "Choose files or .zip archive",
-            type=SUPPORTED_EXTENSIONS + ["zip"],
-            accept_multiple_files=True,
-            key="unified_uploader",
-        )
-        if st.button("Analyze Uploaded Codebase", disabled=not uploaded_files, type="primary"):
-            with st.spinner("Analyzing codebase..."):
-                try:
-                    # Check if there is a zip file in the uploaded files
-                    zip_files = [f for f in uploaded_files if f.name.lower().endswith(".zip")]
-                    if zip_files:
-                        new_repo = ingest_uploaded_zip(zip_files[0])
-                        st.success(f"Loaded ZIP repository: {new_repo.name}")
-                    else:
-                        new_repo = ingest_uploaded_files(uploaded_files)
-                        st.success(f"Loaded {new_repo.name} ({len(uploaded_files)} file{'s' if len(uploaded_files) != 1 else ''})")
-                    set_repo(new_repo)
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
-
-    with right:
-        st.subheader("🔗 Import GitHub URL")
-        st.caption("Clone and analyze a public Git repository directly from GitHub.")
-        github_url = st.text_input("Repository URL", placeholder="https://github.com/owner/repo")
-        if st.button("Clone and analyze", disabled=not github_url.strip(), type="primary"):
-            with st.spinner("Cloning and analyzing repository..."):
-                try:
-                    new_repo = repo_service.import_github(github_url.strip())
-                    set_repo(new_repo)
-                    st.success(f"Loaded {new_repo.name}")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
-
-    st.caption(
-        "Supported languages: Python, JavaScript/TypeScript, Go, Rust, Java, and C/C++. "
-        "The app automatically skips .git, virtual environments (.venv), node_modules, build outputs, and caches."
-    )
-
-    if repo:
-        st.markdown("---")
-        st.subheader("Repo Analysis")
-        metric_row(repo)
-        st.write(f"Origin: `{repo.origin}`")
-        if repo.error:
-            st.error(repo.error)
-        if repo.warnings:
-            with st.expander("⚠️ System Warnings", expanded=False):
-                for warning in repo.warnings:
-                    render_notice(warning)
-        files_df = cached_load_files_df(repo.repo_id, str(repo.updated_at))
-        clean_files = [
-            {"File Path": f.get("path"), "Language": f.get("language")}
-            for f in files_df
-        ]
-        st.subheader("Files Metadata")
-        st.dataframe(clean_files, use_container_width=True, hide_index=True)
-
-
-def node_label(node: TreeNode) -> str:
-    start_line = node.start_point[0] + 1
-    end_line = node.end_point[0] + 1
-    suffix = f" | {node.text_preview}" if node.text_preview else ""
-    return f"{node.type} [{start_line}:{node.start_point[1]} - {end_line}:{node.end_point[1]}]{suffix}"
-
-
-def collect_tree_rows(
-    node: TreeNode,
-    depth: int,
-    max_depth: int,
-    budget: list[int],
-    rows: list[dict[str, str | int | bool | None]],
-) -> None:
-    if budget[0] <= 0:
-        return
-    budget[0] -= 1
-    start_line = node.start_point[0] + 1
-    end_line = node.end_point[0] + 1
-    rows.append(
-        {
-            "tree": f"{'  ' * depth}{node.type}",
-            "depth": depth,
-            "named": node.named,
-            "start": f"{start_line}:{node.start_point[1]}",
-            "end": f"{end_line}:{node.end_point[1]}",
-            "preview": node.text_preview,
-        }
-    )
-    if depth < max_depth:
-        for child in node.children:
-            collect_tree_rows(child, depth + 1, max_depth, budget, rows)
-
-
-def flatten_named_nodes(node: TreeNode, output: list[TreeNode], limit: int = 500) -> None:
-    if len(output) >= limit:
-        return
-    if node.named:
-        output.append(node)
-    for child in node.children:
-        flatten_named_nodes(child, output, limit)
-
-
-def dot_escape(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', "'").replace("\n", "\\n")
-
-
-def tree_to_dot(root: TreeNode, max_depth: int = 5, max_nodes: int = 180) -> tuple[str, bool]:
-    lines = [
-        "digraph TreeSitter {",
-        "rankdir=TB;",
-        'node [shape=box, style="rounded,filled", fillcolor="#fbfcfa", color="#bfc8c2", fontsize=10];',
-        'edge [color="#6d4b7d"];',
-    ]
-    counter = {"value": 0}
-    truncated = {"value": False}
-
-    def visit(node: TreeNode, depth: int) -> str | None:
-        if counter["value"] >= max_nodes:
-            truncated["value"] = True
-            return None
-        current_id = f"n{counter['value']}"
-        counter["value"] += 1
-        start_line = node.start_point[0] + 1
-        label = dot_escape(f"{node.type}\\nL{start_line}")
-        fill = "#e6f4f1" if node.named else "#f7f8f6"
-        lines.append(f'"{current_id}" [label="{label}", fillcolor="{fill}"];')
-        if depth < max_depth:
-            for child in node.children:
-                child_id = visit(child, depth + 1)
-                if child_id:
-                    lines.append(f'"{current_id}" -> "{child_id}";')
-        elif node.children:
-            truncated["value"] = True
-        return current_id
-
-    visit(root, 0)
-    lines.append("}")
-    return "\n".join(lines), truncated["value"]
-
-
-def render_tree_sitter(repo: RepoMetadata | None) -> None:
-    st.header("Tree-sitter Explorer")
-    if not repo:
-        st.info("Load a repository first.")
-        return
-    files = storage.load_files(repo.repo_id)
-    if not files:
-        st.info("No Python files available.")
-        return
-    selected = st.selectbox(
-        "File",
-        [file.path for file in files],
-        index=0,
-        key="tree_file_select",
-    )
-    document = storage.load_tree_sitter(repo.repo_id, selected)
-    if not document:
-        st.error("Tree-sitter output not found.")
-        return
-    if document.warnings:
-        for warning in document.warnings:
-            st.warning(warning)
-    if document.parse_error:
-        st.error(document.parse_error)
-        st.code(document.source, language="python")
-        return
-
-    left, right = st.columns([0.42, 0.58])
-    with left:
-        st.subheader("Parse Tree")
-        max_depth = st.slider("Expansion depth", 2, 8, 5)
-        max_nodes = st.slider("Rendered nodes", 50, 1000, 300, step=50)
-        if document.root:
-            rows: list[dict[str, str | int | bool | None]] = []
-            collect_tree_rows(document.root, 0, max_depth, [max_nodes], rows)
-            st.dataframe(rows, use_container_width=True, hide_index=True)
-            st.subheader("Parse Tree Graph")
-            dot, truncated = tree_to_dot(document.root, max_depth=max_depth, max_nodes=min(max_nodes, 220))
-            if truncated:
-                st.info("Graph view is truncated by the depth/node controls to keep the page responsive.")
-            try:
-                st.graphviz_chart(dot, use_container_width=True)
-            except Exception:
-                st.info("ℹ️ Parse tree graph cannot be visualized because Graphviz is not installed locally.")
-    with right:
-        st.subheader("Source Span")
-        if document.root:
-            named_nodes: list[TreeNode] = []
-            flatten_named_nodes(document.root, named_nodes)
-            labels = [node_label(node) for node in named_nodes]
-            selected_index = st.selectbox("Highlight node", range(len(labels)), format_func=lambda index: labels[index])
-            chosen = named_nodes[selected_index]
-            start_line = chosen.start_point[0] + 1
-            end_line = chosen.end_point[0] + 1
-            lines = document.source.splitlines()
-            snippet = "\n".join(lines[max(0, start_line - 1) : min(len(lines), end_line)])
-            st.caption(f"{selected}:{start_line}-{end_line}")
-            st.code(snippet or document.source, language="python", line_numbers=True)
-
-
-def graph_to_dot(graph: GraphDocument, max_nodes: int = 80, max_edges: int = 160) -> str:
-    visible_nodes = graph.nodes[:max_nodes]
-    visible = {node.node_id for node in visible_nodes}
-    lines = [
-        "digraph G {", 
-        "rankdir=LR;", 
-        "bgcolor=transparent;",
-        'node [shape=box, style="rounded,filled", fontname="Courier New", fontsize=9];'
-    ]
-    for node in visible_nodes:
-        ntype = (node.node_type or "").lower()
-        label = f"[{ntype.upper()}]\\n{node.label}".replace('"', "'")
-        node_id_escaped = node.node_id.replace('"', "'")
-        
-        # Harmonious color palette per node type
-        if ntype in {"module", "file"}:
-            fill, border = "#e7f5ff", "#228be6" # Blue
-        elif ntype in {"class", "struct_item", "component"}:
-            fill, border = "#ebfbee", "#40c057" # Green
-        elif ntype in {"function", "method", "concept"}:
-            fill, border = "#fff9db", "#fab005" # Yellow/Amber
-        else:
-            fill, border = "#f8f9fa", "#dee2e6" # Slate/Light Gray
-            
-        lines.append(f'"{node_id_escaped}" [label="{label}", fillcolor="{fill}", color="{border}", penwidth=1.5];')
-        
-    for edge in graph.edges:
-        if edge.source_node in visible and edge.target_node in visible:
-            label = edge.edge_type.replace('"', "'")
-            lines.append(
-                f'"{edge.source_node}" -> "{edge.target_node}" [label="{label}", color="#495057", fontcolor="#495057", fontsize=8];'
-            )
-            max_edges -= 1
-            if max_edges <= 0:
-                break
-    lines.append("}")
-    return "\n".join(lines)
-
-
-def render_graph_schematic(kind: str) -> None:
-    st.markdown("---")
-    st.subheader("🔮 Semantic Schema Guide")
-    st.markdown(
-        "This interactive blueprint explains the **graph model schema** and **metadata layers** "
-        "captured in your graph database. This metadata is selectively loaded to optimize LLM query contexts."
-    )
-    
-    if kind == "codegraph":
-        t1, t2 = st.tabs(["📝 AST Node Types & Metadata", "🔗 AST Relationship Edges"])
-        with t1:
-            st.markdown(
-                """
-                | Node Type | Represents | Captured Information & Metadata Keys | Purpose in optimized QA |
-                | :--- | :--- | :--- | :--- |
-                | **`module`** | A file in the codebase (e.g. `.py`, `.ts`). | `file_path`, `total_lines`, `docstring_headers`, `imports` | Serves as the high-level anchor for structural organization. |
-                | **`class`** | An OOP class definition. | `label` (class name), base classes, `line_start`, `line_end` | Defines data structures and component boundaries. |
-                | **`function`** / **`method`** | Independent utility functions or class-bound methods. | `signature`, parameters, return type, docstrings | Defines modular logic boundaries (code loaded on-demand from disk). |
-                """
-            )
-
-        with t2:
-            st.markdown(
-                """
-                | Edge Type | Connection | Meta Info Saved | Architectural Meaning |
-                | :--- | :--- | :--- | :--- |
-                | **`contains`** | `module ➔ class` or `class ➔ method` | Parent-child ownership, lexical nesting. | Map OOP structures and hierarchy. |
-                | **`calls`** | `function ➔ function` or `method ➔ function` | Caller position, line number, frequency. | Traces dynamic execution paths and call graph. |
-                | **`imports`** | `module ➔ module` | Imported entities, aliases, source line. | Maps compilation and module dependency chains. |
-                | **`inherits`** | `class ➔ class` | Subclassing relations, base class names. | Identifies inheritance trees and behavioral overrides. |
-                """
-            )
-    else: # graphify
-        t1, t2 = st.tabs(["🏗️ Macro Design Nodes & Metadata", "🌊 Lifted Flow Edges"])
-        with t1:
-            st.markdown(
-                """
-                | Node Type | Represents | Captured Information & Metadata Keys | Purpose in optimized QA |
-                | :--- | :--- | :--- | :--- |
-                | **`file`** | A high-level module file. | `file_path`, dependency weights, import footprint | Maps structural macro organization. |
-                | **`component`** | A macro-level class or concept design boundary. | Design role, interaction count, encapsulation level | Identifies core concepts and system boundaries. |
-                """
-            )
-
-        with t2:
-            st.markdown(
-                """
-                | Edge Type | Lifted Relation | Meta Info Saved | Architectural Meaning |
-                | :--- | :--- | :--- | :--- |
-                | **`part_of`** | `component ➔ file` | Structural containing, component ownership. | Maps component-to-file bundling. |
-                | **`depends_on`** | `file ➔ file` | Compilation imports, import dependency trees. | Tracks high-level architectural layering. |
-                | **`triggers`** | `component ➔ component` | Aggregated call flows, execution triggers. | Maps execution triggers across modular component bounds. |
-                | **`extends`** | `component ➔ component` | Architectural inheritance, class expansions. | Tracks modular extension hierarchies. |
-                """
-            )
-            
-    with st.expander("🔬 View Raw JSON Database Schema Definitions"):
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Graph Node Schema Example:**")
-            st.code(
-                '''{
-  "node_id": "codegraph:app/services/token_service.py:TokenService:estimate_tokens",
-  "node_type": "method",
-  "label": "estimate_tokens",
-  "file_path": "backend/app/services/token_service.py",
-  "line_start": 15,
-  "line_end": 23,
-  "source_snippet": null,
-  "metadata": {
-    "docstring_headers": ["Estimate tokens using tiktoken."],
-    "parameters": ["self", "text"],
-    "return_type": "int"
-  }
-}''',
-                language="json"
-            )
-        with col2:
-            st.markdown("**Graph Edge Schema Example:**")
-            st.code(
-                '''{
-  "edge_id": "edge:token_service:calls:tiktoken",
-  "edge_type": "calls",
-  "source_node": "codegraph:app/services/token_service.py:TokenService:estimate_tokens",
-  "target_node": "external:tiktoken:get_encoding",
-  "score": 1.0,
-  "metadata": {
-    "line_number": 20,
-    "alias": "tiktoken"
-  }
-}''',
-                language="json"
-            )
-
-
-def generate_interactive_html_graph(graph, kind: str) -> str:
-    import json
-    nodes = []
-    for node in graph.nodes:
-        nodes.append({
-            "id": node.node_id,
-            "label": node.label,
-            "type": node.node_type,
-            "file_path": node.file_path,
-            "source_snippet": node.source_snippet
-        })
-    links = []
-    for edge in graph.edges:
-        links.append({
-            "source": edge.source_node,
-            "target": edge.target_node,
-            "type": edge.edge_type,
-            "score": edge.score
-        })
-    
-    data_json = json.dumps({"nodes": nodes, "links": links})
-    
-    title_str = "CodeGraph Explorer" if kind == "codegraph" else "Graphify Explorer"
-    subtitle_str = "Full Repository Dependency and Call Hierarchy Graph" if kind == "codegraph" else "Macro-Level High-Level Architectural Flow Graph"
-    
-    template = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Interactive {title_str}</title>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
-    <style>
-        body {{
-            margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #0d1117;
-            color: #c9d1d9;
-            overflow: hidden;
-        }}
-        #canvas {{
-            width: 100vw;
-            height: 100vh;
-        }}
-        .node {{
-            stroke: #21262d;
-            stroke-width: 2px;
-            cursor: pointer;
-            transition: r 0.2s, stroke-width 0.2s;
-        }}
-        .node:hover {{
-            stroke: #8b949e;
-            stroke-width: 3px;
-        }}
-        .node text {{
-            fill: #c9d1d9;
-            font-size: 11px;
-            font-family: monospace;
-            pointer-events: none;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
-        }}
-        .link {{
-            stroke: #30363d;
-            stroke-opacity: 0.6;
-            stroke-width: 1.5px;
-            fill: none;
-        }}
-        #tooltip {{
-            position: absolute;
-            background: rgba(22, 27, 34, 0.95);
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 12px;
-            color: #c9d1d9;
-            font-size: 13px;
-            pointer-events: none;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-            display: none;
-            font-family: monospace;
-            z-index: 100;
-        }}
-        .header {{
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(22, 27, 34, 0.85);
-            padding: 15px 20px;
-            border-radius: 8px;
-            border: 1px solid #30363d;
-            backdrop-filter: blur(8px);
-            pointer-events: none;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }}
-        .header h3 {{ margin: 0 0 5px 0; color: #58a6ff; font-size: 18px; }}
-        .header p {{ margin: 0; font-size: 12px; color: #8b949e; }}
-        .controls {{
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(22, 27, 34, 0.85);
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid #30363d;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }}
-        button {{
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: background 0.2s, border-color 0.2s;
-        }}
-        button:hover {{
-            background: #30363d;
-            border-color: #8b949e;
-        }}
-        .legend {{
-            margin-top: 10px;
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-            font-size: 11px;
-        }}
-        .legend-item {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .legend-color {{
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            border: 1px solid #fff;
-        }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h3>🌲 {title_str}</h3>
-        <p>{subtitle_str}</p>
-        <div class="legend">
-            <div class="legend-item"><div class="legend-color" style="background-color: #4cf07b"></div> File / Module</div>
-            <div class="legend-item"><div class="legend-color" style="background-color: #58a6ff"></div> Class / Component</div>
-            <div class="legend-item"><div class="legend-color" style="background-color: #ff7b72"></div> Function / Concept</div>
-            <div class="legend-item"><div class="legend-color" style="background-color: #d2a8ff"></div> Method</div>
-            <div class="legend-item"><div class="legend-color" style="background-color: #8b949e"></div> External / Other</div>
-        </div>
-    </div>
-    <svg id="canvas"></svg>
-    <div id="tooltip"></div>
-    <div class="controls">
-        <button id="reset-btn">Reset Zoom</button>
-        <button id="pause-btn">Pause Physics</button>
-    </div>
-
-    <script>
-        const graphData = {data_json};
-
-        const svg = d3.select("#canvas");
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-        svg.attr("width", width).attr("height", height);
-
-        const container = svg.append("g");
-
-        // Zoom & Pan
-        const zoom = d3.zoom()
-            .scaleExtent([0.05, 10])
-            .on("zoom", (event) => {{
-                container.attr("transform", event.transform);
-            }});
-        svg.call(zoom);
-
-        document.getElementById("reset-btn").addEventListener("click", () => {{
-            svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
-        }});
-
-        // Color coding
-        const colors = {{
-            "file": "#4cf07b",
-            "module": "#4cf07b",
-            "component": "#58a6ff",
-            "class": "#58a6ff",
-            "concept": "#ff7b72",
-            "function": "#ff7b72",
-            "method": "#d2a8ff",
-            "external": "#8b949e"
-        }};
-        const get_color = (type) => colors[type] || "#bc8cff";
-
-        // Links
-        const link = container.append("g")
-            .selectAll("line")
-            .data(graphData.links)
-            .enter().append("line")
-            .attr("class", "link");
-
-        // Nodes Group
-        const node = container.append("g")
-            .selectAll(".node-group")
-            .data(graphData.nodes)
-            .enter().append("g")
-            .attr("class", "node-group")
-            .call(d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended));
-
-        node.append("circle")
-            .attr("class", "node")
-            .attr("r", d => d.type === "file" || d.type === "module" ? 10 : 8)
-            .attr("fill", d => get_color(d.type));
-
-        node.append("text")
-            .attr("dx", 12)
-            .attr("dy", ".35em")
-            .text(d => d.label || d.id);
-
-        // Force Simulation
-        const simulation = d3.forceSimulation(graphData.nodes)
-            .force("link", d3.forceLink(graphData.links).id(d => d.id).distance(120))
-            .force("charge", d3.forceManyBody().strength(-300))
-            .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collision", d3.forceCollide().radius(25));
-
-        simulation.on("tick", () => {{
-            link
-                .attr("x1", d => d.source.x)
-                .attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x)
-                .attr("y2", d => d.target.y);
-
-            node
-                .attr("transform", d => "translate(" + d.x + "," + d.y + ")");
-        }});
-
-        // Tooltip interaction
-        const tooltip = d3.select("#tooltip");
-        node.selectAll("circle")
-            .on("mouseover", function(event, d) {{
-                let tooltipContent = "<strong>ID:</strong> " + d.id + "<br/><strong>Type:</strong> " + d.type;
-                if (d.file_path) {{
-                    tooltipContent += "<br/><strong>File:</strong> " + d.file_path;
-                }}
-                if (d.source_snippet) {{
-                    let escaped = d.source_snippet
-                        .replace(/&/g, "&amp;")
-                        .replace(/</g, "&lt;")
-                        .replace(/>/g, "&gt;");
-                    tooltipContent += "<br/><strong>Code Snippet:</strong><pre style='margin: 4px 0 0 0; background: #161b22; padding: 6px; border-radius: 4px; border: 1px solid #30363d; font-size: 10px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; text-align: left;'>" + escaped + "</pre>";
-                }}
-                tooltip.style("display", "block").html(tooltipContent);
-                d3.select(this).attr("r", d.type === "file" || d.type === "module" ? 14 : 12);
-            }})
-            .on("mousemove", function(event) {{
-                tooltip.style("left", (event.pageX + 15) + "px")
-                       .style("top", (event.pageY - 15) + "px");
-            }})
-            .on("mouseout", function(event, d) {{
-                tooltip.style("display", "none");
-                d3.select(this).attr("r", d.type === "file" || d.type === "module" ? 10 : 8);
-            }});
-
-        // Controls
-        let physicsPaused = false;
-        document.getElementById("pause-btn").addEventListener("click", () => {{
-            if (physicsPaused) {{
-                simulation.alpha(0.3).restart();
-                document.getElementById("pause-btn").innerText = "Pause Physics";
-            }} else {{
-                simulation.stop();
-                document.getElementById("pause-btn").innerText = "Resume Physics";
-            }}
-            physicsPaused = !physicsPaused;
-        }});
-
-        function dragstarted(event, d) {{
-            if (!event.active && !physicsPaused) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-        }}
-
-        function dragged(event, d) {{
-            d.fx = event.x;
-            d.fy = event.y;
-        }}
-
-        function dragended(event, d) {{
-            if (!event.active && !physicsPaused) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-        }}
-
-        window.addEventListener("resize", () => {{
-            const w = window.innerWidth;
-            const h = window.innerHeight;
-            svg.attr("width", w).attr("height", h);
-            if (!physicsPaused) simulation.force("center", d3.forceCenter(w / 2, h / 2)).restart();
-        }});
-    </script>
-</body>
-</html>"""
-    return template
-
-
-def render_graph(repo: RepoMetadata | None, kind: str) -> None:
-    title = "CodeGraph Explorer" if kind == "codegraph" else "Graphify Explorer"
-    st.header(title)
-    if not repo:
-        st.info("Load a repository first.")
-        return
-    graph = cached_load_codegraph(repo.repo_id, str(repo.updated_at)) if kind == "codegraph" else cached_load_graphify(repo.repo_id, str(repo.updated_at))
-    if not graph:
-        st.error(f"{title} output not found.")
-        return
-    if graph.warnings:
-        for warning in graph.warnings:
-            render_notice(warning)
-    if kind == "graphify" and graph.source == "graphify-fallback":
-        st.info(
-            "Native Graphify output is not available in this environment. This tab is showing the saved Graphify adapter output plus a clearly labeled fallback graph derived from CodeGraph."
-        )
-    # Download Interactive HTML Graph option (Placed at the top)
-    try:
-        html_content = generate_interactive_html_graph(graph, kind)
-        st.download_button(
-            label=f"📥 Download Interactive {title} HTML",
-            data=html_content,
-            file_name=f"{kind}_graph_{repo.repo_id[:8]}.html",
-            mime="text/html",
-            key=f"download_html_{kind}"
-        )
-    except Exception as e:
-        st.caption(f"Could not generate downloadable HTML graph: {e}")
-
-    cols = st.columns(3)
-    cols[0].metric("Source", graph.source)
-    cols[1].metric("Nodes", len(graph.nodes))
-    cols[2].metric("Edges", len(graph.edges))
-    try:
-        dot_code = cached_get_graph_dot(repo.repo_id, kind, str(repo.updated_at))
-        if dot_code:
-            st.graphviz_chart(dot_code, use_container_width=True)
-    except Exception:
-        st.info("ℹ️ Visual graph chart cannot be rendered because Graphviz is not installed locally. Please download the interactive HTML version above to view the graph dynamically!")
-
-    with st.expander("Nodes"):
-        st.dataframe(cached_get_graph_nodes_df(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True, hide_index=True)
-    with st.expander("Edges"):
-        st.dataframe(cached_get_graph_edges_df(repo.repo_id, kind, str(repo.updated_at)), use_container_width=True, hide_index=True)
-    if kind == "graphify" and graph.raw_output_path:
-        with st.expander("Raw Graphify adapter output"):
-            raw_path = Path(graph.raw_output_path)
-            if raw_path.exists():
-                raw_text = raw_path.read_text(encoding="utf-8", errors="replace")
-                st.code(raw_text[:16000], language="json")
-                if len(raw_text) > 16000:
-                    st.caption("Raw output truncated for display.")
-            else:
-                st.caption(f"Raw output path recorded but not found on disk: {graph.raw_output_path}")
-
-    # Render semantic schema explanation view
-    render_graph_schematic(kind)
-
-
-def render_tokens(repo: RepoMetadata | None) -> None:
-    st.header("Token Analytics")
-    if not repo:
-        st.info("Load a repository first.")
-        return
-
-    # 1. Load all queries run so far
-    queries_dir = storage.repo_state_dir(repo.repo_id) / "queries"
-    count = len(list(queries_dir.glob("*.json"))) if queries_dir.exists() else 0
-    queries = cached_load_queries(repo.repo_id, str(queries_dir), count)
-
-    if queries:
-        st.subheader("📊 Query Token Usage & Savings History")
-        
-        # Build one unified table showing everything
-        table_rows = []
-        for q_rec in queries:
-            if q_rec.mode != "graph_optimized":
-                continue
-            q_text = q_rec.query.strip()
-            prompt_meas = q_rec.token_usage.get("llm_prompt_tokens")
-            prompt_tokens = prompt_meas.tokens if prompt_meas else 0
-            
-            baseline_meas = q_rec.token_usage.get("whole_codebase_baseline")
-            baseline_tokens = baseline_meas.tokens if baseline_meas else 0
-            
-            resp_meas = q_rec.token_usage.get("llm_response_tokens")
-            resp_tokens = resp_meas.tokens if resp_meas else 0
-            
-            total_meas = q_rec.token_usage.get("total_per_query_tokens")
-            total_tokens = total_meas.tokens if total_meas else (prompt_tokens + resp_tokens)
-            
-            saved = max(0, baseline_tokens - prompt_tokens) if baseline_tokens > 0 else 0
-            pct = (saved / baseline_tokens * 100) if baseline_tokens > 0 else 0.0
-            raw_strategy = getattr(q_rec, "retrieval_strategy", "") or ""
-            if "Advanced" in raw_strategy:
-                engine_name = "Advanced Hybrid"
-            elif "Graphify" in raw_strategy:
-                engine_name = "Graphify CLI"
-            elif "CodeGraph" in raw_strategy:
-                engine_name = "CodeGraph CLI"
-            else:
-                if q_rec.selected_nodes and any(n.node_id.startswith("graphify:") for n in q_rec.selected_nodes):
-                    engine_name = "Graphify CLI"
+# ── Live Sidebar Brain Checklist Placeholder ──
+st.sidebar.markdown("---")
+st.sidebar.subheader("📋 Execution Plan (Brain)")
+sidebar_todo_placeholder = st.sidebar.empty()
+
+# Initialize session state variables
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
+if "harness_todo" not in st.session_state:
+    st.session_state["harness_todo"] = []
+if "unstructured_docs" not in st.session_state:
+    st.session_state["unstructured_docs"] = []
+if "unstructured_graph" not in st.session_state:
+    st.session_state["unstructured_graph"] = None
+if "unstructured_community_summaries" not in st.session_state:
+    st.session_state["unstructured_community_summaries"] = {}
+if "unstructured_community_embeddings" not in st.session_state:
+    st.session_state["unstructured_community_embeddings"] = {}
+if "unstructured_node_embeddings" not in st.session_state:
+    st.session_state["unstructured_node_embeddings"] = {}
+
+# Render static or last known checklist in sidebar
+def render_sidebar_todo(todo):
+    with sidebar_todo_placeholder.container():
+        if todo:
+            for i, item in enumerate(todo):
+                status = item["status"]
+                step = item["step"]
+                if status == "completed":
+                    st.markdown(f"🟢 **Step {i+1}**: {step} (Complete)")
+                elif status == "in_progress":
+                    st.markdown(f"🟡 **Step {i+1}**: {step} (In Progress)")
                 else:
-                    engine_name = "CodeGraph CLI"
-
-            table_rows.append({
-                "Time": q_rec.created_at.strftime("%H:%M:%S") if q_rec.created_at else "N/A",
-                "Query / Question": q_text,
-                "Whole Codebase Baseline": baseline_tokens,
-                "Graph-Optimized Input": prompt_tokens,
-                "LLM Response Output": resp_tokens,
-                "Total Query Tokens": total_tokens,
-                "Tokens Saved": saved,
-                "Savings %": f"{round(pct, 2)}%",
-                "Engine / Strategy": engine_name
-            })
-            
-        if table_rows:
-            st.dataframe(table_rows, use_container_width=True, hide_index=True)
-            
-            # Show aggregate savings
-            total_baseline = sum(q_rec.token_usage.get("whole_codebase_baseline").tokens for q_rec in queries if q_rec.mode == "graph_optimized" and q_rec.token_usage.get("whole_codebase_baseline"))
-            total_graph = sum(q_rec.token_usage.get("llm_prompt_tokens").tokens for q_rec in queries if q_rec.mode == "graph_optimized" and q_rec.token_usage.get("llm_prompt_tokens"))
-            total_saved = max(0, total_baseline - total_graph)
-            avg_pct = (total_saved / total_baseline * 100) if total_baseline else 0
-            
-            st.markdown("#### 📈 Cumulative Savings Against Whole Codebase Baseline")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Total Baseline Tokens", f"{total_baseline:,}")
-            c2.metric("Total Optimized Tokens", f"{total_graph:,}")
-            c3.metric("Total Tokens Saved", f"{total_saved:,}")
-            c4.metric("Avg. Token Savings %", f"{round(avg_pct, 2)}%")
+                    st.markdown(f"⚪ **Step {i+1}**: {step} (Pending)")
         else:
-            st.info("Ask a question in **Graph QA** to see direct query-by-query token savings here!")
-    else:
-        st.info("No queries have been run in this session yet. Go to Graph QA to ask a question!")
+            st.info("Harness is idle. Submit a query to trigger planning.")
 
-    # Collapsible Ingestion Pipeline Measurements
-    summary = storage.load_token_summary(repo.repo_id)
-    if summary:
-        if summary.cumulative_session_usage:
-            st.markdown("#### Cumulative Raw Stage Measurements")
-            st.dataframe(
-                [{"stage": key, "tokens": value} for key, value in summary.cumulative_session_usage.items()],
-                use_container_width=True,
-                hide_index=True,
-            )
+render_sidebar_todo(st.session_state["harness_todo"])
 
+# ── Main UI Layout ──
 
-def parse_and_render_code_fix(answer_text: str, repo_id: str) -> None:
-    if not answer_text:
-        st.markdown("_No answer generated._")
-        return
-        
-    # Regex to extract <code_fix>...</code_fix>
-    match = re.search(r"<code_fix>(.*?)</code_fix>", answer_text, re.DOTALL)
-    if not match:
-        st.markdown(answer_text)
-        return
-        
-    # Exclude the code_fix tags from the conversational output
-    conversation_text = answer_text.replace(match.group(0), "").strip()
-    if conversation_text:
-        st.markdown(conversation_text)
-        
-    # Parse inner XML tags
-    inner = match.group(1)
-    file_match = re.search(r"<filepath>(.*?)</filepath>", inner, re.DOTALL)
-    orig_match = re.search(r"<original_code>(.*?)</original_code>", inner, re.DOTALL)
-    repl_match = re.search(r"<replacement_code>(.*?)</replacement_code>", inner, re.DOTALL)
+st.markdown('<h1 class="title-gradient">🕸️ Graph-Based Context Optimization for LLMs</h1>', unsafe_allow_html=True)
+
+main_tabs = st.tabs(["📤 Ingest & Index Graphs", "🌐 Visualizer Dashboard", "💬 Master Loop QA"])
+
+# --- Tab 0: Ingest & Index Graphs ---
+with main_tabs[0]:
+    col1, col2 = st.columns(2)
     
-    if not file_match or not orig_match or not repl_match:
-        st.warning("⚠️ A code fix was proposed but could not be parsed completely.")
-        return
-        
-    filepath = file_match.group(1).strip()
-    original_code = orig_match.group(1)
-    if original_code.startswith("\n"):
-        original_code = original_code[1:]
-    if original_code.endswith("\n"):
-        original_code = original_code[:-1]
-        
-    replacement_code = repl_match.group(1)
-    if replacement_code.startswith("\n"):
-        replacement_code = replacement_code[1:]
-    if replacement_code.endswith("\n"):
-        replacement_code = replacement_code[:-1]
-        
-    st.markdown("---")
-    st.markdown(f"#### 🛠️ Proposed Fix for `{filepath}`")
-    
-    # Compute unified diff
-    orig_lines = original_code.splitlines()
-    repl_lines = replacement_code.splitlines()
-    diff_generator = difflib.unified_diff(
-        orig_lines, 
-        repl_lines, 
-        fromfile=f"a/{filepath}", 
-        tofile=f"b/{filepath}", 
-        lineterm=""
-    )
-    diff_text = "\n".join(list(diff_generator))
-    
-    st.code(diff_text, language="diff", line_numbers=True)
-    
-    # Render Apply Fix button
-    button_key = f"apply_fix_btn_{hashlib.md5(filepath.encode()).hexdigest()}"
-    if st.button("📁 Apply Fix directly to Workspace", key=button_key, type="primary"):
-        with st.spinner("Applying codebase changes and re-ingesting..."):
-            res = chat_service.apply_rectification(
-                repo_id=repo_id,
-                file_path=filepath,
-                original_code=original_code,
-                replacement_code=replacement_code
-            )
-            if res.get("status") == "success":
-                st.session_state.rectification_result = {
-                    "repo_id": repo_id,
-                    "file_path": filepath,
-                    "download_content": res.get("new_content") or replacement_code,
-                    "message": res.get("message")
-                }
-                st.balloons()
-                st.rerun()
-            else:
-                st.error(f"❌ Error applying fix: {res.get('error')}")
-
-
-
-
-
-def render_query_record(record: QueryRecord) -> None:
-    if record.error:
-        st.error(f"❌ LLM Query Failed: {record.error}")
-        if "400" in record.error or "bad request" in record.error.lower():
-            st.info("💡 **Tip:** This 'Bad Request' error usually means your API key is invalid/expired, or the selected model is not supported or currently disabled by the provider. Please verify your API key in the sidebar.")
-        elif "401" in record.error or "unauthorized" in record.error.lower():
-            st.info("💡 **Tip:** This 'Unauthorized' error indicates the API key is incorrect. Please check your sidebar API key.")
-        elif "429" in record.error or "rate limit" in record.error.lower():
-            st.warning("⚠️ **Rate Limit Exceeded:** Free tier endpoints have strict rate limits. Please wait a moment before trying again, or configure a paid model tier/key.")
-    strategy = getattr(record, "retrieval_strategy", "unknown")
-    if strategy != "unknown":
-        st.caption(f"{record.status.upper()} | {record.latency_ms} ms | Strategy: `{strategy}` | query_id={record.query_id}")
-    else:
-        st.caption(f"{record.status.upper()} | {record.latency_ms} ms | query_id={record.query_id}")
-    parse_and_render_code_fix(record.answer, record.repo_id)
-
-    
-    # Calculate Token and Context Size Analytics
-    baseline_prompt = record.token_usage.get("whole_codebase_baseline")
-    optimized_prompt = record.token_usage.get("llm_prompt_tokens")
-    response_tokens = record.token_usage.get("llm_response_tokens")
-    
-    baseline_count = baseline_prompt.tokens if baseline_prompt else 0
-    optimized_count = optimized_prompt.tokens if optimized_prompt else 0
-    response_count = response_tokens.tokens if response_tokens else 0
-    
-    saved_tokens = max(0, baseline_count - optimized_count)
-    saved_percent = round((saved_tokens / baseline_count * 100), 1) if baseline_count else 0.0
-    
-    st.markdown("---")
-    st.subheader("📊 Token & Context Size Savings Analysis")
-    
-    if baseline_count > 0:
-        cols = st.columns(4)
-        cols[0].metric(
-            "General Baseline", 
-            f"{baseline_count:,} tokens",
-            help="Total prompt tokens required if you uploaded the entire codebase folder directly to the LLM."
-        )
-        cols[1].metric(
-            "Optimized Graph", 
-            f"{optimized_count:,} tokens",
-            help="Actual prompt tokens sent using your graph-optimized retrieval."
-        )
-        cols[2].metric(
-            "Net Input Saved", 
-            f"{saved_tokens:,} tokens", 
-            f"-{saved_percent}%" if saved_percent > 0 else "0.0%",
-            help="Absolute and percentage reduction in LLM prompt (input) tokens."
-        )
-        cols[3].metric(
-            "LLM Output Tokens", 
-            f"{response_count:,} tokens",
-            help="Actual response tokens generated by Gemini to answer your question."
-        )
-    else:
-        st.info("Ingesting token summary... Ask a question to compute complete savings metrics!")
-        
-    with st.expander("🔍 Detailed Token Breakdown"):
-        st.markdown(
-            f"""
-            * **General Chatbot Baseline (Whole Codebase):** `{baseline_count:,}` tokens
-            * **Our Optimized Graph QA (Actual):** `{optimized_count:,}` tokens
-            * **Net Input Tokens Saved:** `{saved_tokens:,}` tokens (**{saved_percent}% prompt size reduction**!)
-            * **LLM Response Output size:** `{response_count:,}` tokens
-            
-            This means your graph-optimized retrieval algorithm saved **{saved_tokens:,} input tokens** on this single query!
-            """
-        )
-        st.dataframe([value.model_dump() for value in record.token_usage.values()], use_container_width=True, hide_index=True)
-
-    if record.selected_nodes:
-        counts = graph_node_source_counts(record)
-        cols = st.columns(2)
-        cols[0].metric("CodeGraph nodes", counts["codegraph"])
-        cols[1].metric("Native Graphify nodes", counts["graphify"])
-        
-        exact_context = getattr(record, "context", "") or ""
-        
-        with st.expander("📄 View Exact Context Passed to LLM", expanded=False):
-            t1, t2 = st.tabs(["📝 Context Text Block Only", "🚀 Complete Raw LLM Prompt Ingested"])
-            with t1:
-                st.markdown(
-                    "This is the exact, optimized context text block that was appended to the LLM prompt "
-                    "using the selected graph retrieval engine:"
-                )
-                st.text_area("LLM Prompt Context Text", exact_context, height=350)
-            with t2:
-                st.markdown(
-                    "This is the **entire raw prompt** received by the Gemini model, including "
-                    "system role guidelines, automated code rectifier instructions, your question, and the context block:"
-                )
-                rectify_str = ""
-                if st.session_state.get("rectify_enabled", False):
-                    rectify_str = (
-                        "\n\nIMPORTANT: If you identify any bug/error and propose a code change, you MUST wrap the proposed fix exactly in "
-                        "the following XML structure so the system can apply it automatically:\n"
-                        "<code_fix>\n"
-                        "  <filepath>relative/path/to/file.py</filepath>\n"
-                        "  <original_code>\n"
-                        "// Exact block of old code to replace (must match precisely including spacing)\n"
-                        "  </original_code>\n"
-                        "  <replacement_code>\n"
-                        "// Exact block of new code to insert\n"
-                        "  </replacement_code>\n"
-                        "</code_fix>\n"
-                        "Make sure that the <original_code> block you target matches the codebase content exactly, character-for-character."
-                    )
-                full_raw_prompt = (
-                    "You are a graph-aware repository QA assistant. Use the selected CodeGraph and Graphify nodes, "
-                    "relationships, and snippets to answer. Prefer precise relationships over broad guesses. "
-                    "Cite files, lines, and relevant graph nodes. If the graph context is insufficient, say so. "
-                    "Be extremely concise, direct, and brief in your answer. Avoid verbose explanations."
-                    f"{rectify_str}\n\n"
-                    f"Question:\n{record.query}\n\n"
-                    f"Optimized graph context:\n{exact_context}"
-                )
-                st.text_area("Gemini Final Prompt", full_raw_prompt, height=450)
-
-
-
-        with st.expander("Selected Graph Nodes"):
-            st.dataframe([node.model_dump() for node in record.selected_nodes], use_container_width=True, hide_index=True)
-            
-    with st.expander("Source Snippets", expanded=True):
-        for snippet in record.source_snippets:
-            st.caption(f"{snippet.file_path}:{snippet.line_start}-{snippet.line_end} | {snippet.source}")
-            st.code(snippet.text, language="python", line_numbers=True)
-
-
-
-
-def graph_node_source_counts(record: QueryRecord) -> dict[str, int]:
-    counts = {"codegraph": 0, "graphify": 0}
-    for node in record.selected_nodes:
-        is_graphify = (
-            node.node_id.startswith("graphify:") or 
-            (node.metadata and node.metadata.get("graphify_processed") is True)
-        )
-        
-        if is_graphify and not node.node_id.startswith("codegraph:"):
-            counts["graphify"] += 1
-        elif node.node_id.startswith("codegraph:"):
-            counts["codegraph"] += 1
-    return counts
-
-
-def qa_prompt_help() -> str:
-    return "Ask about architecture, important functions, call paths, classes, imports, or implementation behavior."
-
-
-def render_rectification_downloads(repo: RepoMetadata | None, kind: str) -> None:
-    if not repo:
-        return
-    if "rectification_result" in st.session_state:
-        res = st.session_state.rectification_result
-        if res.get("repo_id") == repo.repo_id:
-            st.success(f"🎉 {res.get('message')}")
-            
-            # Create two columns for download buttons
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # File download button
-                file_name = Path(res.get("file_path")).name
-                st.download_button(
-                    label=f"📥 Download Fixed {file_name}",
-                    data=res.get("download_content"),
-                    file_name=file_name,
-                    mime="text/plain",
-                    key=f"download_fixed_file_{kind}"
-                )
-                
-            with col2:
-                # Repo ZIP download button
+    with col1:
+        st.subheader("📂 Ingest Codebase Graph (Phase 1)")
+        repo_upload = st.file_uploader("Upload Python codebase (.zip)", type=["zip"])
+        if repo_upload:
+            with st.spinner("Extracting and building Tree-sitter CodeGraph..."):
                 try:
-                    from app.services.file_utils import zip_dir_to_bytes
-                    repo_root = storage.repo_source_dir(repo.repo_id)
-                    zip_data = zip_dir_to_bytes(repo_root)
-                    st.download_button(
-                        label="📦 Download Complete Fixed Repo Zip",
-                        data=zip_data,
-                        file_name=f"{repo.name}_fixed.zip",
-                        mime="application/zip",
-                        key=f"download_fixed_repo_zip_{kind}"
-                    )
+                    repo_meta = ingest_uploaded_zip(repo_upload)
+                    st.session_state.repo_id = repo_meta.repo_id
+                    st.success(f"Successfully built CodeGraph for repository: {repo_meta.name}")
+                    st.metric("Total Python Files", repo_meta.stats.python_files)
+                    st.metric("Total Python Lines", repo_meta.stats.python_lines)
                 except Exception as e:
-                    st.error(f"Error generating repository zip: {e}")
+                    st.error(f"Ingestion failed: {e}")
                     
-            if st.button("Dismiss Notification", key=f"dismiss_rectification_{kind}"):
-                del st.session_state.rectification_result
-                st.rerun()
+        # Check active repository
+        active_repo_id = st.session_state.get("repo_id")
+        if active_repo_id:
+            meta = storage.load_repo_metadata(active_repo_id)
+            if meta:
+                st.info(f"Active repository: **{meta.name}** (ID: {active_repo_id})")
+                
+    with col2:
+        st.subheader("📄 Ingest Unstructured PDFs (Phase 2)")
+        pdf_uploads = st.file_uploader("Upload PDF or text guidelines (.pdf, .txt, .md)", type=["pdf", "txt", "md"], accept_multiple_files=True)
+        if pdf_uploads:
+            with st.spinner("Chunking files..."):
+                docs = process_uploaded_files(pdf_uploads)
+                current_docs = st.session_state.get("unstructured_docs", [])
+                for d in docs:
+                    if not any(cd["name"] == d["name"] for cd in current_docs):
+                        current_docs.append(d)
+                st.session_state["unstructured_docs"] = current_docs
+                st.success(f"Ingested {len(docs)} document(s).")
+                
+        # Action Buttons for LangGraph
+        all_docs = st.session_state.get("unstructured_docs", [])
+        if all_docs:
+            st.markdown("### Document Catalog")
+            for doc in all_docs:
+                st.write(f"- **{doc['name']}** ({doc['type']}, {doc['size_kb']} KB)")
+                
+            louvain_res = st.slider("Louvain Resolution (community sizing)", min_value=0.5, max_value=10.0, value=1.0, step=0.1)
+            
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button("🕸️ Build LangGraph", use_container_width=True):
+                    with st.spinner("Extracting entities & relations with LLM..."):
+                        try:
+                            G = build_graph_from_documents(all_docs)
+                            st.session_state["unstructured_graph"] = G
+                            st.success("LangGraph built!")
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
+            with c2:
+                disabled = st.session_state.get("unstructured_graph") is None
+                if st.button("🧩 Louvain Communities", use_container_width=True, disabled=disabled):
+                    with st.spinner("Detecting communities..."):
+                        G = st.session_state["unstructured_graph"]
+                        cmap = detect_communities(G, resolution=louvain_res)
+                        st.session_state["unstructured_graph"] = G
+                        st.success("Detected Louvain communities.")
+            with c3:
+                disabled = st.session_state.get("unstructured_graph") is None
+                if st.button("📝 Generate Summaries", use_container_width=True, disabled=disabled):
+                    with st.spinner("Summarizing communities..."):
+                        try:
+                            G = st.session_state["unstructured_graph"]
+                            sums, embs = summarize_all_communities(G)
+                            st.session_state["unstructured_community_summaries"] = sums
+                            st.session_state["unstructured_community_embeddings"] = embs
+                            st.success("Generated community summaries.")
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
 
-
-def render_codegraph_qa(repo: RepoMetadata | None) -> None:
-    st.header("CodeGraph QA")
-    if not repo:
-        st.info("Load a repository first.")
-        return
-        
-    codegraph_path = storage.repo_state_dir(repo.repo_id) / "codegraph.json"
-    if not codegraph_path.exists() or codegraph_path.stat().st_size == 0:
-        st.error("No CodeGraph graph found. Please build or import a repository with CodeGraph output first.")
-        return
-
-    render_rectification_downloads(repo, "codegraph")
-
-    left, right = st.columns([3, 1])
-    with left:
-        question = st.text_area(
-            "Ask a question about codebase symbols and relationships:",
-            placeholder="e.g. 'How does TokenService calculate prompt savings?'",
-            key="codegraph_qa_question"
-        )
-    with right:
-        retrieval_method_label = st.selectbox(
-            "Retrieval Engine",
-            ["Internal Graph Retrieval (Default)", "Advanced Hybrid Scoring System"],
-            index=0,
-            key="codegraph_retrieval_method",
-            help="Select the retrieval algorithm for CodeGraph."
-        )
-        retrieval_method = "advanced" if "Advanced" in retrieval_method_label else "internal"
-
-        max_nodes_input = st.text_input(
-            "Max Nodes:",
-            value="8",
-            key="codegraph_max_nodes_input",
-            disabled=(retrieval_method == "advanced"),
-            help="Limits context details sent to the LLM. Larger number provides more files but uses more tokens."
-        )
-        
-        max_anchors = None
-        max_neighbors = None
-        if retrieval_method == "advanced":
-            max_anchors_input = st.text_input(
-                "Primary Anchors (Full):",
-                value="4",
-                key="codegraph_max_anchors",
-                help="Number of primary anchor nodes to include with full code."
-            )
-            max_neighbors_input = st.text_input(
-                "Neighbors (Full):",
-                value="8",
-                key="codegraph_max_neighbors",
-                help="Number of neighboring nodes to include with full code."
-            )
-            if max_anchors_input.strip():
+# --- Tab 1: Visualizer Dashboard ---
+with main_tabs[1]:
+    st.subheader("🌐 Visualizer Dashboard")
+    
+    col_code, col_pdf = st.columns(2)
+    
+    with col_code:
+        st.markdown("### 🌲 Tree-sitter CodeGraph Network")
+        repo_id = st.session_state.get("repo_id")
+        if not repo_id:
+            st.warning("Upload a python codebase in Tab 1 to visualize the CodeGraph.")
+        else:
+            graph_doc = storage.load_codegraph(repo_id)
+            if not graph_doc:
+                st.error("Could not load CodeGraph file.")
+            else:
+                with st.spinner("Compiling CodeGraph visualization..."):
+                    # Map GraphDocument to NetworkX Graph
+                    G_code = nx.Graph()
+                    for node in graph_doc.nodes:
+                        if node.node_type == "cli_output":
+                            continue
+                        G_code.add_node(
+                            node.node_id,
+                            label=node.label,
+                            type=node.node_type,
+                            community_id=0,
+                            description=node.source_snippet or f"Line {node.line_start} in {node.file_path}"
+                        )
+                    for edge in graph_doc.edges:
+                        G_code.add_edge(
+                            edge.source_node,
+                            edge.target_node,
+                            relation_type=edge.edge_type
+                        )
+                    
+                    try:
+                        code_html = graph_to_pyvis(G_code, height="500px")
+                        import streamlit.components.v1 as components
+                        components.html(code_html, height=520, scrolling=False)
+                    except Exception as e:
+                        st.error(f"Could not render CodeGraph: {e}")
+                        
+    with col_pdf:
+        st.markdown("### 🕸️ LangGraph Unstructured Community Network")
+        G_pdf = st.session_state.get("unstructured_graph")
+        if G_pdf is None:
+            st.warning("Upload documents and build the LangGraph in Tab 1 to visualize the Network.")
+        else:
+            with st.spinner("Compiling LangGraph visualization..."):
                 try:
-                    max_anchors = int(max_anchors_input.strip())
-                except ValueError:
-                    st.warning("Please enter a valid integer for Primary Anchors.")
-            if max_neighbors_input.strip():
-                try:
-                    max_neighbors = int(max_neighbors_input.strip())
-                except ValueError:
-                    st.warning("Please enter a valid integer for Neighbors.")
+                    pdf_html = graph_to_pyvis(G_pdf, height="500px")
+                    import streamlit.components.v1 as components
+                    components.html(pdf_html, height=520, scrolling=False)
+                except Exception as e:
+                    st.error(f"Could not render LangGraph: {e}")
 
-    max_nodes_val = 8
-    if max_nodes_input.strip():
-        try:
-            max_nodes_val = int(max_nodes_input.strip())
-        except ValueError:
-            st.warning("Please enter a valid integer for Max Nodes.")
-            
-    if st.button("Ask CodeGraph QA", disabled=not question.strip(), type="primary"):
-        with st.spinner("Selecting graph neighborhood and calling LLM..."):
-            active_llm = get_active_llm_provider()
-            active_chat_service = ChatService(
-                storage=storage,
-                graph_retrieval_service=GraphRetrievalService(storage=storage, token_service=TokenService()),
-                token_service=TokenService(),
-                llm_provider=active_llm,
-                pipeline=pipeline,
-            )
-            record = active_chat_service.graph_optimized_qa(
-                repo.repo_id,
-                question.strip(),
-                st.session_state.session_id,
-                source_selection="codegraph",
-                max_nodes=max_nodes_val,
-                rectify=st.session_state.get("rectify_enabled", False),
-                retrieval_method=retrieval_method,
-                graphify_mode="bfs",
-                max_anchors=max_anchors,
-                max_neighbors=max_neighbors
-            )
-            st.session_state.codegraph_record = record
+# --- Tab 2: Master Loop QA ---
+with main_tabs[2]:
+    st.subheader("💬 stateless Master Loop QA")
+    
+    # Render chat history
+    for msg in st.session_state["chat_history"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if "harness_history" in msg and msg["harness_history"]:
+                with st.expander("🛠️ Show Master Loop Perception-Action Observations", expanded=False):
+                    for idx, step in enumerate(msg["harness_history"]):
+                        st.markdown(f"#### 🔄 Iteration {idx+1}")
+                        st.write(f"**Thought:** {step.get('thought')}")
+                        st.write(f"**Action:** Call `{step.get('tool')}` with `{step.get('tool_input')}`")
+                        st.code(step.get('observation'), language="text")
 
-    if "codegraph_record" in st.session_state:
-        render_query_record(st.session_state.codegraph_record)
-
-
-def render_graphify_qa(repo: RepoMetadata | None) -> None:
-    st.header("Graphify QA")
-    if not repo:
-        st.info("Load a repository first.")
-        return
+    # Chat Input
+    if user_query := st.chat_input("Ask a question mapping codebase dependencies and unstructured rules..."):
+        with st.chat_message("user"):
+            st.markdown(user_query)
         
-    graphify_path = storage.repo_state_dir(repo.repo_id) / "graphify.json"
-    if not graphify_path.exists() or graphify_path.stat().st_size == 0:
-        st.error("No Graphify graph found. Please build or import a repository with Graphify output first.")
-        return
-
-    render_rectification_downloads(repo, "graphify")
-
-    left, right = st.columns([3, 1])
-    with left:
-        question = st.text_area(
-            "Ask a question about codebase architecture:",
-            placeholder="e.g. 'How is TokenService connected to standard QA?'",
-            key="graphify_qa_question"
-        )
-    with right:
-        traversal_label = st.radio(
-            "Traversal Strategy",
-            ["Broad Architecture (BFS)", "Deep Execution Path (DFS)"],
-            index=0,
-            key="graphify_traversal_mode",
-            help="BFS explores the call graph broadly. DFS follows execution paths deeply."
-        )
-        graphify_mode = "dfs" if "DFS" in traversal_label else "bfs"
+        # Placeholders for live output
+        live_thought = st.empty()
+        chat_log_placeholder = st.empty()
         
-        retrieval_method_label = st.selectbox(
-            "Retrieval Engine",
-            ["Internal Graph Retrieval (Default)", "Advanced Hybrid Scoring System"],
-            index=0,
-            key="graphify_retrieval_method",
-            help="Select the retrieval algorithm for Graphify."
-        )
-        retrieval_method = "advanced" if "Advanced" in retrieval_method_label else "internal"
+        # Callback for live updating during Harness run
+        def update_ui(history, todo):
+            render_sidebar_todo(todo)
+            with chat_log_placeholder.container():
+                st.markdown("### ⚙️ Live Perception-Action-Observation Log")
+                for idx, step in enumerate(history):
+                    thought_snippet = step.get('thought', '')[:60] + "..." if len(step.get('thought', '')) > 60 else step.get('thought', '')
+                    with st.expander(f"Iteration {idx+1}: {thought_snippet or 'Running...'} (Tool: {step.get('tool')})", expanded=(idx == len(history)-1)):
+                        st.write(f"**Thought:** {step.get('thought')}")
+                        st.write(f"**Action:** Call `{step.get('tool')}` with `{step.get('tool_input')}`")
+                        st.code(step.get('observation'), language="text")
 
-        token_budget_input = st.text_input(
-            "Max Token Usage (Budget):",
-            value="2000",
-            key="graphify_token_budget",
-            disabled=(retrieval_method == "advanced"),
-            help="Max characters/tokens budget for retrieval. Maps to max_nodes = max(1, budget // 250)."
-        )
-        
-        max_anchors = None
-        max_neighbors = None
-        if retrieval_method == "advanced":
-            max_anchors_input = st.text_input(
-                "Primary Anchors (Full):",
-                value="4",
-                key="graphify_max_anchors",
-                help="Number of primary anchor nodes to include with full code."
-            )
-            max_neighbors_input = st.text_input(
-                "Neighbors (Full):",
-                value="8",
-                key="graphify_max_neighbors",
-                help="Number of neighboring nodes to include with full code."
-            )
-            if max_anchors_input.strip():
-                try:
-                    max_anchors = int(max_anchors_input.strip())
-                except ValueError:
-                    st.warning("Please enter a valid integer for Primary Anchors.")
-            if max_neighbors_input.strip():
-                try:
-                    max_neighbors = int(max_neighbors_input.strip())
-                except ValueError:
-                    st.warning("Please enter a valid integer for Neighbors.")
+        with st.spinner("Initializing central agentic harness loop..."):
+            harness = AgentHarness(chat_service=chat_service, llm_provider=active_llm)
+            try:
+                result = harness.execute(user_query, max_iterations=8, callback=update_ui)
+                final_answer = result["final_answer"]
+                history_log = result["history"]
+            except Exception as e:
+                final_answer = f"Harness loop crashed with error: {str(e)}"
+                history_log = [{"thought": "Harness execution failed", "tool": "none", "tool_input": "{}", "observation": str(e)}]
+                
+        # Render final answer
+        with st.chat_message("assistant"):
+            st.markdown(final_answer)
+            with st.expander("🛠️ Final Perception-Action Observations", expanded=False):
+                for idx, step in enumerate(history_log):
+                    st.markdown(f"#### 🔄 Iteration {idx+1}")
+                    st.write(f"**Thought:** {step.get('thought')}")
+                    st.write(f"**Action:** Call `{step.get('tool')}` with `{step.get('tool_input')}`")
+                    st.code(step.get('observation'), language="text")
 
-    token_budget_val = 2000
-    if token_budget_input.strip():
-        try:
-            token_budget_val = int(token_budget_input.strip())
-        except ValueError:
-            st.warning("Please enter a valid integer for the token budget.")
-            
-    max_nodes = max(1, token_budget_val // 250)
-
-    if st.button("Ask Graphify QA", disabled=not question.strip(), type="primary"):
-        with st.spinner("Selecting graph neighborhood and calling LLM..."):
-            active_llm = get_active_llm_provider()
-            active_chat_service = ChatService(
-                storage=storage,
-                graph_retrieval_service=GraphRetrievalService(storage=storage, token_service=TokenService()),
-                token_service=TokenService(),
-                llm_provider=active_llm,
-                pipeline=pipeline,
-            )
-            record = active_chat_service.graph_optimized_qa(
-                repo.repo_id,
-                question.strip(),
-                st.session_state.session_id,
-                source_selection="graphify",
-                max_nodes=max_nodes,
-                rectify=st.session_state.get("rectify_enabled", False),
-                retrieval_method=retrieval_method,
-                graphify_mode=graphify_mode,
-                max_anchors=max_anchors,
-                max_neighbors=max_neighbors
-            )
-            st.session_state.graphify_record = record
-
-    if "graphify_record" in st.session_state:
-        render_query_record(st.session_state.graphify_record)
-
-
-
-
-
-def inject_premium_styles() -> None:
-    st.markdown(
-        """
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-        
-        <style>
-            /* Global dark-mode background and font */
-            html, body, [class*="css"], .stApp {
-                font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                background-color: #0b0f19 !important;
-                color: #f9fafb !important;
-            }
-            
-            /* JetBrains Mono for Code Blocks */
-            code, pre, [data-testid="stMarkdownContainer"] code {
-                font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace !important;
-            }
-            
-            /* Professional Gradient Header */
-            .main-header {
-                font-size: 2.4rem;
-                font-weight: 800;
-                background: linear-gradient(135deg, #a855f7 0%, #6366f1 50%, #3b82f6 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                margin-bottom: 0.8rem;
-                letter-spacing: -0.025em;
-            }
-            
-            /* Glassmorphic card metrics */
-            div[data-testid="stMetric"] {
-                background: rgba(17, 24, 39, 0.6) !important;
-                border: 1px solid rgba(255, 255, 255, 0.08) !important;
-                border-radius: 12px !important;
-                padding: 15px 20px;
-                box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3) !important;
-                backdrop-filter: blur(8px) !important;
-                -webkit-backdrop-filter: blur(8px) !important;
-                transition: all 0.25s ease-in-out;
-            }
-            
-            div[data-testid="stMetric"]:hover {
-                transform: translateY(-2px);
-                border-color: rgba(99, 102, 241, 0.4);
-                box-shadow: 0 10px 25px rgba(99, 102, 241, 0.15) !important;
-            }
-            
-            /* Sidebar Styling */
-            section[data-testid="stSidebar"] {
-                background-color: #070a12 !important;
-                border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
-            }
-            
-            /* Tabs customization */
-            button[data-baseweb="tab"] {
-                font-size: 0.95rem !important;
-                font-weight: 600 !important;
-                color: #9ca3af !important;
-                transition: all 0.2s ease !important;
-                background-color: transparent !important;
-                border: none !important;
-                padding: 8px 16px !important;
-            }
-            button[data-baseweb="tab"]:hover {
-                color: #f3f4f6 !important;
-                background-color: rgba(255, 255, 255, 0.02) !important;
-            }
-            button[data-baseweb="tab"][aria-selected="true"] {
-                color: #a5b4fc !important;
-                background-color: rgba(99, 102, 241, 0.1) !important;
-                border-radius: 6px;
-            }
-            
-            /* Smooth transitions for interactive buttons */
-            .stButton>button {
-                border-radius: 8px !important;
-                font-weight: 600 !important;
-                background: rgba(255, 255, 255, 0.05) !important;
-                border: 1px solid rgba(255, 255, 255, 0.1) !important;
-                color: #f3f4f6 !important;
-                transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-            }
-            
-            .stButton>button:hover {
-                background: rgba(255, 255, 255, 0.08) !important;
-                border-color: rgba(255, 255, 255, 0.2) !important;
-                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2) !important;
-                transform: translateY(-1px) !important;
-            }
-            
-            /* Primary buttons gradient */
-            .stButton>button[data-testid="baseButton-primary"] {
-                background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
-                color: #ffffff !important;
-                border: none !important;
-                box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3) !important;
-            }
-            .stButton>button[data-testid="baseButton-primary"]:hover {
-                background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%) !important;
-                box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
-                transform: translateY(-1px) !important;
-            }
-            
-            /* Custom style for inputs */
-            div[data-baseweb="select"] > div {
-                background-color: #111827 !important;
-                border: 1px solid rgba(255, 255, 255, 0.08) !important;
-                border-radius: 8px !important;
-            }
-            div[data-testid="stTextInput"] input, div[data-testid="stTextArea"] textarea {
-                background-color: #111827 !important;
-                border: 1px solid rgba(255, 255, 255, 0.08) !important;
-                border-radius: 8px !important;
-                color: #f9fafb !important;
-            }
-            
-            /* Premium Alert & Info Boxes */
-            div[data-testid="stNotification"] {
-                border-radius: 8px !important;
-                border: 1px solid rgba(255, 255, 255, 0.08) !important;
-                background-color: rgba(17, 24, 39, 0.6) !important;
-                backdrop-filter: blur(8px) !important;
-            }
-            
-            /* Dataframes and tables */
-            div[data-testid="stDataFrame"] {
-                border: 1px solid rgba(255, 255, 255, 0.08) !important;
-                border-radius: 12px !important;
-                overflow: hidden !important;
-            }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def main() -> None:
-    inject_premium_styles()
-    st.markdown('<h1 class="main-header">Context Optimization Engine</h1>', unsafe_allow_html=True)
-
-    if "session_id" not in st.session_state:
-        st.session_state.session_id = uuid4().hex
-
-    repo = current_repo()
-    render_status(repo)
-
-    tab_names = [
-        "Upload / Import",
-        "CodeGraph",
-        "CodeGraph QA",
-        "Graphify",
-        "Graphify QA",
-        "Token Analytics",
-    ]
-    tabs = st.tabs(tab_names)
-    with tabs[0]:
-        render_upload_import(repo)
-    with tabs[1]:
-        render_graph(repo, "codegraph")
-    with tabs[2]:
-        render_codegraph_qa(repo)
-    with tabs[3]:
-        render_graph(repo, "graphify")
-    with tabs[4]:
-        render_graphify_qa(repo)
-    with tabs[5]:
-        render_tokens(repo)
-
-
-
-
-if __name__ == "__main__":
-    main()
+        # Save to chat history
+        st.session_state["chat_history"].append({"role": "user", "content": user_query})
+        st.session_state["chat_history"].append({
+            "role": "assistant",
+            "content": final_answer,
+            "harness_history": history_log
+        })
+        st.session_state["harness_todo"] = st.session_state.get("harness_todo", [])
+        st.rerun()
