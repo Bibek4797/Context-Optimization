@@ -298,6 +298,13 @@ Provide the JSON response for the current iteration. Remember, if you have not w
             # Check if final answer is returned
             if "final_answer" in parsed_response:
                 final_answer = parsed_response["final_answer"]
+                
+                # Auto-complete all remaining checklist steps!
+                todo_list = st.session_state.get("harness_todo", [])
+                for step in todo_list:
+                    step["status"] = "completed"
+                st.session_state["harness_todo"] = todo_list
+                
                 history.append({
                     "thought": thought,
                     "tool": "none",
@@ -336,6 +343,15 @@ Provide the JSON response for the current iteration. Remember, if you have not w
                         observation = self.tools[tool_name](**tool_input)
                     else:
                         observation = self.tools[tool_name](tool_input)
+                        
+                    # Auto-update the checklist: mark the first pending/in_progress step as completed!
+                    if tool_name not in ["todo_write", "todo_update"]:
+                        todo_list = st.session_state.get("harness_todo", [])
+                        for step in todo_list:
+                            if step.get("status") in ["pending", "in_progress"]:
+                                step["status"] = "completed"
+                                st.session_state["harness_todo"] = todo_list
+                                break
                 except Exception as exc:
                     observation = f"Error executing tool '{tool_name}': {str(exc)}\n{traceback.format_exc()}"
             
@@ -370,18 +386,16 @@ Provide the JSON response for the current iteration. Remember, if you have not w
 You have access to a Tool Dispatch Registry with the following tools:
 1. `todo_write`: Write a step-by-step execution plan.
    Args: {"steps": ["step 1", "step 2", ...]}
-2. `todo_update`: Update a plan step status.
-   Args: {"step_index": int, "status": "pending" | "in_progress" | "completed"}
-3. `query_codegraph`: Query the codebase CodeGraph for structure/dependency relationships.
+2. `query_codegraph`: Query the codebase CodeGraph for structure/dependency relationships.
    Args: {"query": "string query"}
-4. `query_langgraph`: Query the unstructured document LangGraph for PDF text facts using community detection.
+3. `query_langgraph`: Query the unstructured document LangGraph for PDF text facts using community detection.
    Args: {"query": "string query"}
-5. `spawn_subagent`: Delegate a massive graph traversal to an isolated context window, returning a clean text summary.
+4. `spawn_subagent`: Delegate a massive graph traversal to an isolated context window, returning a clean text summary.
    Args: {"task_description": "string describing the traversal", "graph_type": "codegraph" | "langgraph"}
 
 CRITICAL INSTRUCTIONS:
 - You MUST write a step-by-step plan using `todo_write` BEFORE executing any other queries.
-- As you complete each step in your plan, update its status to "completed" using `todo_update`. (Updating to "in_progress" is optional if you want to save loop iterations).
+- Do NOT output any status update commands (such as updating step status). The backend will automatically manage and check off your plan tasks as you call the corresponding query tools.
 - Do not make assumptions. Query the appropriate graph using the tools.
 - All actions must be output as valid JSON matching the format below.
 
