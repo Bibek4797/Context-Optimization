@@ -450,39 +450,67 @@ with main_tabs[1]:
                 st.error(f"Could not load {graph_title} file.")
             else:
                 with st.spinner(f"Compiling {graph_title} visualization..."):
-                    # Map GraphDocument to NetworkX Graph
-                    G_code = nx.Graph()
+                    # Map GraphDocument → NetworkX DiGraph (directed edges = call/import flow)
+                    G_code = nx.DiGraph()
+                    node_type_counts: dict[str, int] = {}
+
                     for node in graph_doc.nodes:
                         if node.node_type == "cli_output":
                             continue
-                        # Use first 300 chars of source snippet or default location info as visual description
-                        desc = node.source_snippet
+                        # Rich tooltip description: source snippet or file location
+                        desc = (node.source_snippet or "")[:500]
                         if not desc:
                             if node.file_path:
-                                desc = f"Line {node.line_start} in {node.file_path}"
+                                desc = f"{node.file_path}:{node.line_start}"
                             else:
-                                desc = f"{node.node_type.capitalize()}: {node.label}"
-                                
+                                desc = f"{node.node_type}: {node.label}"
+
+                        node_type_counts[node.node_type] = node_type_counts.get(node.node_type, 0) + 1
                         G_code.add_node(
                             node.node_id,
                             label=node.label,
                             type=node.node_type,
-                            community_id=0,
-                            description=desc
+                            community_id=node.node_type,   # drives color grouping by type
+                            description=desc,
                         )
+
                     for edge in graph_doc.edges:
-                        G_code.add_edge(
-                            edge.source_node,
-                            edge.target_node,
-                            relation_type=edge.edge_type
-                        )
-                    
+                        if G_code.has_node(edge.source_node) and G_code.has_node(edge.target_node):
+                            G_code.add_edge(
+                                edge.source_node,
+                                edge.target_node,
+                                relation_type=edge.edge_type,
+                            )
+
+                    mc1, mc2 = st.columns(2)
+                    mc1.metric("Nodes", len(G_code.nodes))
+                    mc2.metric("Edges", len(G_code.edges))
+
                     try:
                         code_html = graph_to_pyvis(G_code, height="500px")
                         import streamlit.components.v1 as components
                         components.html(code_html, height=520, scrolling=False)
                     except Exception as e:
                         st.error(f"Could not render {graph_title}: {e}")
+
+                    # Node-type legend
+                    legend_colors = {
+                        "module/file": "#3B82F6", "class/component": "#A855F7",
+                        "function": "#60EFFF", "method": "#34D399",
+                        "import": "#94A3B8", "external_symbol": "#64748B",
+                        "concept": "#F59E0B",
+                    }
+                    legend_html = "<div style='display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;'>"
+                    for ltype, lcolor in legend_colors.items():
+                        count = sum(node_type_counts.get(t, 0) for t in ltype.split("/"))
+                        if count > 0:
+                            legend_html += (
+                                f"<span style='display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#e2e8f0'>"
+                                f"<span style='width:12px;height:12px;border-radius:50%;background:{lcolor};display:inline-block'></span>"
+                                f"{ltype} <b>({count})</b></span>"
+                            )
+                    legend_html += "</div>"
+                    st.markdown(legend_html, unsafe_allow_html=True)
                         
     with col_pdf:
         st.markdown("### 🕸️ LangGraph Unstructured Community Network")
