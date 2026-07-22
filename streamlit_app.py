@@ -601,14 +601,3 @@ with main_tabs[3]:
             "Tokens": [baseline_tokens, optimized_tokens]
         })
         st.bar_chart(chart_df, x="Context Model", y="Tokens", color="#6366f1")
-        
-        # Financial and performance implications
-        st.markdown("#### 💡 Performance & Financial Highlights")
-        # Estimate Cost Savings (e.g. Gemini 2.5 Flash input price: $0.075 / 1M tokens)
-        baseline_cost = (baseline_tokens / 1_000_000) * 0.075
-        opt_cost = (optimized_tokens / 1_000_000) * 0.075
-        cost_diff = baseline_cost - opt_cost
-        
-        st.write(f"- **Financial Efficiency**: The baseline model costs around **${baseline_cost:.6f}** per query, whereas our optimized model costs **${opt_cost:.6f}**. You are saving **${cost_diff:.6f}** per call!")
-        st.write("- **Rate Limit Safety**: By filtering out up to 95% of irrelevant context, the graph-optimized model significantly reduces the risk of hitting API token limit exhaustion (`429 Rate Limit Exceeded`).")
-        st.write("- **Inference Latency**: Smaller, focused prompt contexts result in significantly lower time-to-first-token and faster synthesis response speeds.")

@@ -200,11 +200,12 @@ Perform the traversal, trace relationships, and summarize the findings. Return O
 
     # --- Master Loop ---
 
-    def execute(self, user_query: str, max_iterations: int = 10, callback: Callable[[List[Dict[str, str]], List[Dict[str, Any]]], None] | None = None) -> Dict[str, Any]:
+    def execute(self, user_query: str, max_iterations: int = 16, callback: Callable[[List[Dict[str, str]], List[Dict[str, Any]]], None] | None = None) -> Dict[str, Any]:
         """Runs the perception-action-observation master loop."""
         history: List[Dict[str, str]] = []
         iteration = 0
         final_answer = None
+        consecutive_errors = 0
         
         # Reset plan in state
         st.session_state["harness_todo"] = []
@@ -240,8 +241,9 @@ Provide the JSON response for the current iteration. Remember, if you have not w
             try:
                 llm_response = self.llm_provider.generate_answer(prompt)
                 response_text = llm_response.text.strip()
+                consecutive_errors = 0  # Reset on success
             except Exception as e:
-                # Add observation about LLM failure
+                consecutive_errors += 1
                 observation = f"Error calling LLM provider: {str(e)}"
                 history.append({
                     "thought": "LLM generation failed, attempting to retry.",
@@ -251,6 +253,12 @@ Provide the JSON response for the current iteration. Remember, if you have not w
                 })
                 if callback:
                     callback(history, st.session_state.get("harness_todo", []))
+                
+                if consecutive_errors >= 3:
+                    final_answer = f"The Agent Harness was aborted after 3 consecutive LLM API failures. Please check your API key, billing status, or rate limits. Last error: {str(e)}"
+                    break
+                    
+                time.sleep(3.0)  # Cool down to let rate limits clear
                 continue
 
             # 3. Parse JSON from LLM
