@@ -500,7 +500,7 @@ with main_tabs[2]:
         with st.spinner("Initializing central agentic harness loop..."):
             harness = AgentHarness(chat_service=chat_service, llm_provider=active_llm)
             try:
-                result = harness.execute(user_query, max_iterations=8, callback=update_ui)
+                result = harness.execute(user_query, max_iterations=16, callback=update_ui)
                 final_answer = result["final_answer"]
                 history_log = result["history"]
             except Exception as e:

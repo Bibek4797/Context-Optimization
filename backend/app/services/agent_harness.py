@@ -325,7 +325,7 @@ You have access to a Tool Dispatch Registry with the following tools:
 
 CRITICAL INSTRUCTIONS:
 - You MUST write a step-by-step plan using `todo_write` BEFORE executing any other queries.
-- As you execute each step, update its status to "in_progress" and then "completed" using `todo_update`.
+- As you complete each step in your plan, update its status to "completed" using `todo_update`. (Updating to "in_progress" is optional if you want to save loop iterations).
 - Do not make assumptions. Query the appropriate graph using the tools.
 - All actions must be output as valid JSON matching the format below.
 
