@@ -86,6 +86,99 @@ class RectificationService:
             return {"status": "failed", "error": f"File '{file_path}' does not exist on disk."}
 
         try:
+            # Handle Jupyter Notebook (.ipynb) files specially
+            if abs_path.suffix.lower() == ".ipynb":
+                import json
+                try:
+                    data = json.loads(abs_path.read_text(encoding="utf-8", errors="replace"))
+                    target_str = clean_xml_code_block(original_code).replace("\r\n", "\n")
+                    target_replacement = clean_xml_code_block(replacement_code).replace("\r\n", "\n")
+                    
+                    # Normalize target_str lines for comparison
+                    target_lines = [l.strip() for l in target_str.splitlines()]
+                    
+                    matched = False
+                    for cell in data.get("cells", []):
+                        if cell.get("cell_type") == "code":
+                            source_list = cell.get("source", [])
+                            if isinstance(source_list, list):
+                                cell_code = "".join(source_list)
+                            else:
+                                cell_code = source_list
+                            
+                            cell_code_norm = cell_code.replace("\r\n", "\n")
+                            
+                            # Layer A: Exact match in this cell
+                            if target_str in cell_code_norm:
+                                new_cell_code = cell_code_norm.replace(target_str, target_replacement, 1)
+                                cell["source"] = [line + "\n" for line in new_cell_code.splitlines()]
+                                if cell["source"] and not new_cell_code.endswith("\n"):
+                                    cell["source"][-1] = cell["source"][-1].rstrip("\n")
+                                matched = True
+                                break
+                            else:
+                                # Layer B: Line window match in this cell
+                                cell_lines = cell_code_norm.splitlines()
+                                match_idx = -1
+                                for i in range(len(cell_lines) - len(target_lines) + 1):
+                                    window = [cell_lines[i + j].strip() for j in range(len(target_lines))]
+                                    if window == target_lines:
+                                        match_idx = i
+                                        break
+                                if match_idx != -1:
+                                    file_first_line = cell_lines[match_idx]
+                                    file_indent_len = len(file_first_line) - len(file_first_line.lstrip())
+                                    file_indent = file_first_line[:file_indent_len]
+                                    
+                                    target_first_line = target_str.splitlines()[0] if target_str.splitlines() else ""
+                                    target_indent_len = len(target_first_line) - len(target_first_line.lstrip())
+                                    
+                                    adjusted_replacement = adjust_indentation(target_replacement, file_indent, target_indent_len)
+                                    
+                                    before = cell_lines[:match_idx]
+                                    after = cell_lines[match_idx + len(target_lines):]
+                                    new_cell_code = "\n".join(before + [adjusted_replacement] + after)
+                                    
+                                    cell["source"] = [line + "\n" for line in new_cell_code.splitlines()]
+                                    if cell["source"] and not new_cell_code.endswith("\n"):
+                                        cell["source"][-1] = cell["source"][-1].rstrip("\n")
+                                    matched = True
+                                    break
+                    
+                    if not matched:
+                        return {
+                            "status": "failed",
+                            "error": "Original code block could not be located in any notebook cell."
+                        }
+                    
+                    # Create safety backup file
+                    backup_path = abs_path.with_suffix(abs_path.suffix + ".bak")
+                    shutil.copy2(abs_path, backup_path)
+                    
+                    # Write updated JSON back
+                    abs_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+                    
+                    # Re-run pipeline analysis
+                    metadata = self.storage.load_repo_metadata(repo_id)
+                    if metadata:
+                        self.pipeline.analyze_existing(
+                            name=metadata.name, 
+                            source_dir=repo_root, 
+                            origin=metadata.origin, 
+                            repo_id=repo_id
+                        )
+                    
+                    return {
+                        "status": "success",
+                        "file_path": file_path,
+                        "backup_path": str(backup_path.name),
+                        "new_content": read_text_lossy(abs_path),
+                        "message": f"Successfully applied changes to Jupyter notebook '{file_path}'."
+                    }
+                except Exception as e:
+                    return {"status": "failed", "error": f"Failed to patch Jupyter notebook JSON: {e}"}
+
+            # Standard text file parsing (original logic)
             # Read existing file content and normalize carriage returns to standard Unix newlines
             content = abs_path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
             

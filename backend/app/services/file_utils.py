@@ -46,6 +46,30 @@ def clean_repo_name(name: str) -> str:
 
 
 def read_text_lossy(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".ipynb":
+        try:
+            import json
+            content = path.read_text(encoding="utf-8", errors="replace")
+            data = json.loads(content)
+            cells = data.get("cells", [])
+            code_parts = []
+            cell_counter = 1
+            for cell in cells:
+                if cell.get("cell_type") == "code":
+                    source = cell.get("source", [])
+                    if isinstance(source, list):
+                        source_code = "".join(source)
+                    elif isinstance(source, str):
+                        source_code = source
+                    else:
+                        source_code = ""
+                    if source_code.strip():
+                        code_parts.append(f"# In[{cell_counter}]:\n{source_code}")
+                        cell_counter += 1
+            return "\n\n".join(code_parts)
+        except Exception:
+            pass
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -68,6 +92,7 @@ def is_ignored(path: Path) -> bool:
 EXTENSION_TO_LANGUAGE = {
     ".py": "python",
     ".pyi": "python",
+    ".ipynb": "python",
     ".js": "javascript",
     ".jsx": "javascript",
     ".ts": "typescript",

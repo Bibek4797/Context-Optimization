@@ -11,6 +11,7 @@ from app.services.file_utils import read_text_lossy, source_snippet
 EXTENSION_TO_LANGUAGE = {
     ".py": "python",
     ".pyi": "python",
+    ".ipynb": "python",
     ".js": "javascript",
     ".jsx": "javascript",
     ".ts": "typescript",

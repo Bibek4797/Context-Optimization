@@ -330,14 +330,30 @@ with main_tabs[0]:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("📂 Ingest Codebase Graph (Phase 1)")
-        repo_upload = st.file_uploader("Upload Python codebase (.zip)", type=["zip"])
+        SUPPORTED_EXTENSIONS = [
+            "py", "pyi", "ipynb", "js", "jsx", "ts", "tsx",
+            "go", "rs", "java", "c", "cpp", "cc", "cxx", "h", "hpp",
+        ]
+        repo_upload = st.file_uploader(
+            "Upload codebase (.zip) or individual source files",
+            type=SUPPORTED_EXTENSIONS + ["zip"],
+            accept_multiple_files=True,
+            key="codebase_uploader"
+        )
         if repo_upload:
             with st.spinner("Extracting and building Tree-sitter CodeGraph..."):
                 try:
-                    repo_meta = ingest_uploaded_zip(repo_upload)
-                    st.session_state.repo_id = repo_meta.repo_id
-                    st.success(f"Successfully built CodeGraph for repository: {repo_meta.name}")
+                    # Check if there is a zip in the uploaded files
+                    zip_files = [f for f in repo_upload if f.name.lower().endswith(".zip")]
+                    if zip_files:
+                        repo_meta = ingest_uploaded_zip(zip_files[0])
+                        st.session_state.repo_id = repo_meta.repo_id
+                        st.success(f"Successfully built CodeGraph for repository: {repo_meta.name}")
+                    else:
+                        repo_meta = ingest_uploaded_files(repo_upload)
+                        st.session_state.repo_id = repo_meta.repo_id
+                        st.success(f"Successfully built CodeGraph for {len(repo_upload)} uploaded files.")
+                    
                     st.metric("Total Python Files", repo_meta.stats.python_files)
                     st.metric("Total Python Lines", repo_meta.stats.python_lines)
                 except Exception as e:
