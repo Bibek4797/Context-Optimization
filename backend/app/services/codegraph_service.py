@@ -91,19 +91,22 @@ class CodeGraphService:
             
             # Walk top level children to extract CodeGraph relationships
             for child in root_node.children:
-                self._traverse_tree(
-                    child,
-                    source_bytes,
-                    rel_path,
-                    module_name,
-                    parent_stack,
-                    nodes,
-                    edges,
-                    symbol_index,
-                    pending_imports,
-                    pending_calls,
-                    pending_inherits,
-                )
+                try:
+                    self._traverse_tree(
+                        child,
+                        source_bytes,
+                        rel_path,
+                        module_name,
+                        parent_stack,
+                        nodes,
+                        edges,
+                        symbol_index,
+                        pending_imports,
+                        pending_calls,
+                        pending_inherits,
+                    )
+                except Exception as exc:
+                    warnings.append(f"Error traversing AST node in {rel_path}: {exc}")
 
         # Resolve imports
         for source_id, import_name, imported_module in pending_imports:
@@ -275,10 +278,13 @@ class CodeGraphService:
                         
             parent_stack.append(("class", graph_node.node_id))
             for child in node.children:
-                self._traverse_tree(
-                    child, source_bytes, rel_path, module_name, parent_stack,
-                    nodes, edges, symbol_index, pending_imports, pending_calls, pending_inherits
-                )
+                try:
+                    self._traverse_tree(
+                        child, source_bytes, rel_path, module_name, parent_stack,
+                        nodes, edges, symbol_index, pending_imports, pending_calls, pending_inherits
+                    )
+                except Exception:
+                    pass
             parent_stack.pop()
             return
             
@@ -299,14 +305,20 @@ class CodeGraphService:
             symbol_index[qualname] = graph_node.node_id
             self._add_edge(edges, "contains", parent_id, graph_node.node_id, score=1.0)
             
-            self._find_calls_in_node(node, source_bytes, graph_node.node_id, pending_calls)
+            try:
+                self._find_calls_in_node(node, source_bytes, graph_node.node_id, pending_calls)
+            except Exception:
+                pass
             return
 
         for child in node.children:
-            self._traverse_tree(
-                child, source_bytes, rel_path, module_name, parent_stack,
-                nodes, edges, symbol_index, pending_imports, pending_calls, pending_inherits
-            )
+            try:
+                self._traverse_tree(
+                    child, source_bytes, rel_path, module_name, parent_stack,
+                    nodes, edges, symbol_index, pending_imports, pending_calls, pending_inherits
+                )
+            except Exception:
+                pass
 
     def _find_calls_in_node(self, node, source_bytes: bytes, caller_id: str, pending_calls: list) -> None:
         if node.type in CALL_NODE_TYPES:
@@ -319,7 +331,10 @@ class CodeGraphService:
                 pending_calls.append((caller_id, call_name, node.start_point[0] + 1))
                 
         for child in node.children:
-            self._find_calls_in_node(child, source_bytes, caller_id, pending_calls)
+            try:
+                self._find_calls_in_node(child, source_bytes, caller_id, pending_calls)
+            except Exception:
+                pass
 
     def _create_symbol_node(
         self,
