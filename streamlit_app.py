@@ -37,6 +37,27 @@ from app.services.unstructured.communities import detect_communities, summarize_
 from app.services.unstructured.visualization import graph_to_pyvis
 from app.services.agent_harness import AgentHarness
 
+
+# ── Code Fix Extraction Helper ──
+def _extract_code_fixes(text: str) -> list[dict]:
+    """Parse all <code_fix> XML blocks from an LLM answer and return structured dicts."""
+    fixes = []
+    pattern = re.compile(
+        r"<code_fix>\s*"
+        r"<filepath>(?P<filepath>[^<]+)</filepath>\s*"
+        r"<original_code>(?P<original>[\s\S]*?)</original_code>\s*"
+        r"<replacement_code>(?P<replacement>[\s\S]*?)</replacement_code>\s*"
+        r"</code_fix>",
+        re.IGNORECASE,
+    )
+    for m in pattern.finditer(text):
+        fixes.append({
+            "filepath": m.group("filepath").strip(),
+            "original": m.group("original").strip(),
+            "replacement": m.group("replacement").strip(),
+        })
+    return fixes
+
 st.set_page_config(
     page_title="Harness Execution Engine",
     page_icon="🕸️",
@@ -622,9 +643,91 @@ with main_tabs[2]:
                 st.success(latest.get("answer", "No answer recorded."))
     
     # Render chat history
-    for msg in st.session_state["chat_history"]:
+    for msg_idx, msg in enumerate(st.session_state["chat_history"]):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+
+            # ── Code Fix Panels (assistant messages only) ──
+            if msg["role"] == "assistant":
+                fixes = _extract_code_fixes(msg["content"])
+                for fix_idx, fix in enumerate(fixes):
+                    fix_key = f"fix_{msg_idx}_{fix_idx}"
+                    with st.expander(
+                        f"🔧 Proposed Code Fix → `{fix['filepath']}`",
+                        expanded=True
+                    ):
+                        st.markdown(f"**File:** `{fix['filepath']}`")
+                        fc1, fc2 = st.columns(2)
+                        with fc1:
+                            st.markdown("**Original Code (to replace)**")
+                            st.code(fix["original"], language="python")
+                        with fc2:
+                            st.markdown("**Replacement Code**")
+                            st.code(fix["replacement"], language="python")
+
+                        btn_col1, btn_col2 = st.columns([1, 1])
+                        active_repo = st.session_state.get("repo_id")
+
+                        # Apply button — patches file on disk and rebuilds CodeGraph + Graphify
+                        with btn_col1:
+                            apply_clicked = st.button(
+                                "✅ Apply Fix & Rebuild Graphs",
+                                key=f"apply_{fix_key}",
+                                use_container_width=True,
+                                disabled=not bool(active_repo),
+                                help="Applies the fix to disk, then automatically rebuilds CodeGraph and Graphify."
+                            )
+                        if apply_clicked and active_repo:
+                            with st.spinner(f"Applying fix to `{fix['filepath']}` and rebuilding graphs..."):
+                                result = chat_service.apply_rectification(
+                                    repo_id=active_repo,
+                                    file_path=fix["filepath"],
+                                    original_code=fix["original"],
+                                    replacement_code=fix["replacement"],
+                                )
+                            if result.get("status") == "success":
+                                st.success(
+                                    f"✅ Fix applied to `{fix['filepath']}`. "
+                                    f"Backup saved as `{result.get('backup_path')}`. "
+                                    "CodeGraph & Graphify rebuilt."
+                                )
+                                # Store corrected content for download
+                                st.session_state[f"corrected_{fix_key}"] = (
+                                    fix["filepath"],
+                                    result.get("new_content", ""),
+                                )
+                            else:
+                                st.error(f"❌ Fix failed: {result.get('error', 'Unknown error')}")
+                                st.info(
+                                    "**Reason:** " + result.get("error", "") +
+                                    "\n\nThis usually means the original code block was not found verbatim "
+                                    "in the file. The LLM may have added/removed whitespace. "
+                                    "Try enabling **Rectify Mode** in the retrieval settings so the LLM "
+                                    "generates more precise `<original_code>` blocks."
+                                )
+
+                        # Download button — available after successful apply
+                        with btn_col2:
+                            corrected = st.session_state.get(f"corrected_{fix_key}")
+                            if corrected:
+                                dl_path, dl_content = corrected
+                                st.download_button(
+                                    label="⬇️ Download Corrected File",
+                                    data=dl_content,
+                                    file_name=Path(dl_path).name,
+                                    mime="text/plain",
+                                    key=f"dl_{fix_key}",
+                                    use_container_width=True,
+                                )
+                            else:
+                                st.button(
+                                    "⬇️ Download Corrected File",
+                                    key=f"dl_disabled_{fix_key}",
+                                    disabled=True,
+                                    use_container_width=True,
+                                    help="Apply the fix first to enable download."
+                                )
+
             if "harness_history" in msg and msg["harness_history"]:
                 with st.expander("🛠️ Show Master Loop Perception-Action Observations", expanded=False):
                     for idx, step in enumerate(msg["harness_history"]):
