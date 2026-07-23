@@ -129,7 +129,7 @@ class AgentHarness:
                 "selected_nodes": nodes_info,
                 "selected_edges": edges_info,
                 "answer": ans_text,
-                "context_tokens": len(ctx_retrieved) // 4
+                "context_tokens": self.chat_service.token_service.estimate_tokens(ctx_retrieved)
             }
             st.session_state["retrieval_history"].insert(0, rec_entry)
 
@@ -220,7 +220,7 @@ class AgentHarness:
                 "ranked_communities": results.get("ranked_communities", []),
                 "per_comm_details": per_comm_details,
                 "merged_context_prompt": merged_text,
-                "context_tokens": len(merged_text) // 4
+                "context_tokens": self.chat_service.token_service.estimate_tokens(merged_text)
             })
             
             return f"LangGraph Answer for '{query}':\n{results['final_answer']}"

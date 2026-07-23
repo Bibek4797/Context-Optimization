@@ -81,26 +81,20 @@ def _get_active_pdf_tokens() -> int:
     docs = st.session_state.get("unstructured_docs", [])
     total = 0
     for d in docs:
-        if "char_count" in d:
-            total += d["char_count"] // 4
-        elif "content" in d:
+        if "content" in d:
             total += token_service.estimate_tokens(d["content"])
+        elif "char_count" in d:
+            total += max(1, d["char_count"] // 4)
     return total
 
 def _get_graph_overhead_tokens(repo_id: str | None) -> int:
+    # CodeGraph & Graphify require 0 LLM tokens to build (deterministic AST parsing)
     overhead = 0
+    # LangGraph (PDFs) uses LLM processing to summarize communities from document text
     comm_sums = st.session_state.get("unstructured_community_summaries", {})
     if comm_sums:
         for cid, s in comm_sums.items():
             overhead += token_service.estimate_tokens(str(s))
-    if repo_id:
-        try:
-            summary = storage.load_token_summary(repo_id)
-            if summary and summary.stages:
-                for stage_name, tm in summary.stages.items():
-                    overhead += tm.tokens
-        except Exception:
-            pass
     return overhead
 
 st.set_page_config(
