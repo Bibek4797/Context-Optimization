@@ -219,7 +219,7 @@ def services():
         pipeline=pipeline,
     )
 
-    return storage, pipeline, repo_service, chat_service, base_llm_provider, token_service
+    return storage, pipeline, repo_service, chat_service, llm_provider, token_service
 
 storage, pipeline, repo_service, chat_service, base_llm_provider, token_service = services()
 
