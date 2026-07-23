@@ -58,6 +58,51 @@ def _extract_code_fixes(text: str) -> list[dict]:
         })
     return fixes
 
+
+# ── Asset Token Helpers ──
+def _get_active_codebase_tokens(repo_id: str | None) -> int:
+    if not repo_id:
+        return 0
+    try:
+        repo_root = storage.repo_source_dir(repo_id)
+        files = storage.load_files(repo_id)
+        total = 0
+        from app.services.file_utils import read_text_lossy
+        for rf in files:
+            p = repo_root / rf.path
+            if p.exists():
+                text = read_text_lossy(p)
+                total += token_service.estimate_tokens(text)
+        return total
+    except Exception:
+        return 0
+
+def _get_active_pdf_tokens() -> int:
+    docs = st.session_state.get("unstructured_docs", [])
+    total = 0
+    for d in docs:
+        if "char_count" in d:
+            total += d["char_count"] // 4
+        elif "content" in d:
+            total += token_service.estimate_tokens(d["content"])
+    return total
+
+def _get_graph_overhead_tokens(repo_id: str | None) -> int:
+    overhead = 0
+    comm_sums = st.session_state.get("unstructured_community_summaries", {})
+    if comm_sums:
+        for cid, s in comm_sums.items():
+            overhead += token_service.estimate_tokens(str(s))
+    if repo_id:
+        try:
+            summary = storage.load_token_summary(repo_id)
+            if summary and summary.stages:
+                for stage_name, tm in summary.stages.items():
+                    overhead += tm.tokens
+        except Exception:
+            pass
+    return overhead
+
 st.set_page_config(
     page_title="Harness Execution Engine",
     page_icon="🕸️",
@@ -752,6 +797,59 @@ with main_tabs[2]:
                                     help="Apply the fix first to enable download."
                                 )
 
+            # ── Per-Message Retrieval Inspector & Derived Context Details ──
+            retrieval_recs = msg.get("retrieval_records", [])
+            if retrieval_recs:
+                with st.expander("🔍 Show Retrieval Inspector & Derived Context Details", expanded=False):
+                    for rec_idx, rec in enumerate(retrieval_recs):
+                        st.markdown(f"#### 🌐 Retrieval System: `{rec.get('type', 'Graph')}`")
+                        
+                        # System Badges
+                        st.markdown(
+                            f"• **Source System**: `{rec.get('source_system', 'N/A')}`  \n"
+                            f"• **Retrieval Engine**: `{rec.get('retrieval_method', 'N/A')}`  \n"
+                            f"• **Strategy**: `{rec.get('retrieval_strategy', 'N/A')}`"
+                        )
+                        
+                        # Parameters if available
+                        params_list = []
+                        if rec.get("max_nodes"):
+                            params_list.append(f"Max Nodes: **{rec['max_nodes']}**")
+                        if rec.get("max_neighbors"):
+                            params_list.append(f"AST Hops: **{rec['max_neighbors']}**")
+                        if rec.get("graphify_mode"):
+                            params_list.append(f"Traversal: **{rec['graphify_mode'].upper()}**")
+                        if rec.get("rectify_mode"):
+                            params_list.append("Rectify Mode: **ON**")
+                        if params_list:
+                            st.caption(" | ".join(params_list))
+                            
+                        # Derived Context / Subgraph Content
+                        if rec.get("source_system") == "langgraph" or "LangGraph" in rec.get("type", ""):
+                            st.markdown("##### 🧩 Derived Louvain Communities & Summaries")
+                            per_comm = rec.get("per_comm_details", [])
+                            if per_comm:
+                                for item in per_comm:
+                                    st.info(
+                                        f"**Community {item.get('cid')}** (Relevance Score: {item.get('score', 0.0):.3f})\n\n"
+                                        f"**Summary**: {item.get('summary', '')}\n\n"
+                                        f"**Intermediate Answer**: {item.get('partial_answer', '')}"
+                                    )
+                            st.markdown("##### 📝 Merged Prompt Context")
+                            st.code(rec.get("merged_context_prompt", ""), language="text")
+                        else:
+                            st.markdown("##### 🌲 Derived AST Codebase Subgraph")
+                            nodes = rec.get("selected_nodes", [])
+                            if nodes:
+                                st.markdown("**Selected Graph Nodes:**")
+                                for n in nodes:
+                                    st.write(f"- `{n.get('node_id')}` [{n.get('type')}] `{n.get('label')}` ({n.get('file_path')}:{n.get('line_start')})")
+                            st.markdown("**Source Snippets & Context Derived:**")
+                            st.code(rec.get("context_retrieved", "No explicit context retrieved."), language="python")
+                            
+                        if rec_idx < len(retrieval_recs) - 1:
+                            st.markdown("---")
+
             if "harness_history" in msg and msg["harness_history"]:
                 with st.expander("🛠️ Show Master Loop Perception-Action Observations", expanded=False):
                     for idx, step in enumerate(msg["harness_history"]):
@@ -781,6 +879,9 @@ with main_tabs[2]:
                         st.write(f"**Action:** Call `{step.get('tool')}` with `{step.get('tool_input')}`")
                         st.code(step.get('observation'), language="text")
 
+        # Capture retrieval history count before execution
+        hist_before_len = len(st.session_state.get("retrieval_history", []))
+
         with st.spinner("Initializing central agentic harness loop..."):
             harness = AgentHarness(chat_service=chat_service, llm_provider=active_llm)
             try:
@@ -790,70 +891,164 @@ with main_tabs[2]:
             except Exception as e:
                 final_answer = f"Harness loop crashed with error: {str(e)}"
                 history_log = [{"thought": "Harness execution failed", "tool": "none", "tool_input": "{}", "observation": str(e)}]
-                
-        # Render final answer
-        with st.chat_message("assistant"):
-            st.markdown(final_answer)
-            with st.expander("🛠️ Final Perception-Action Observations", expanded=False):
-                for idx, step in enumerate(history_log):
-                    st.markdown(f"#### 🔄 Iteration {idx+1}")
-                    st.write(f"**Thought:** {step.get('thought')}")
-                    st.write(f"**Action:** Call `{step.get('tool')}` with `{step.get('tool_input')}`")
-                    st.code(step.get('observation'), language="text")
+
+        hist_after = st.session_state.get("retrieval_history", [])
+        new_retrievals = hist_after[:len(hist_after) - hist_before_len] if len(hist_after) > hist_before_len else []
 
         # Save to chat history
         st.session_state["chat_history"].append({"role": "user", "content": user_query})
         st.session_state["chat_history"].append({
             "role": "assistant",
             "content": final_answer,
-            "harness_history": history_log
+            "harness_history": history_log,
+            "retrieval_records": new_retrievals,
+            "timestamp": time.strftime("%H:%M:%S")
         })
         st.session_state["harness_todo"] = st.session_state.get("harness_todo", [])
         st.rerun()
 
 # --- Tab 3: Token Analytics ---
 with main_tabs[3]:
-    st.subheader("📊 Token Analytics & Context Savings")
+    st.subheader("📊 Multi-Turn Token Analytics & Context Savings")
+
+    active_repo = st.session_state.get("repo_id")
+    codebase_tokens = _get_active_codebase_tokens(active_repo)
+    pdf_tokens = _get_active_pdf_tokens()
+    asset_baseline_single = codebase_tokens + pdf_tokens
+    overhead_tokens = _get_graph_overhead_tokens(active_repo)
+
+    # ── Top Inventory Section ──
+    st.markdown("### 📦 Asset Inventory & Graph Construction Overhead")
+    ac1, ac2, ac3, ac4 = st.columns(4)
+    ac1.metric("Active Codebase Tokens", f"{codebase_tokens:,}")
+    ac2.metric("Active PDF/Guideline Tokens", f"{pdf_tokens:,}")
+    ac3.metric("Single-Query Raw Baseline", f"{asset_baseline_single:,}")
+    ac4.metric("Graph Overhead Tokens", f"{overhead_tokens:,}", help="Tokens consumed generating community summaries & AST schemas.")
+
+    st.markdown("---")
+
+    # ── Per-Chat Conversation Breakdown ──
+    st.markdown("### 💬 Per-Chat Conversation Token Breakdown")
+    chat_history = st.session_state.get("chat_history", [])
     
-    # Calculate baseline
-    docs_list = st.session_state.get("unstructured_docs", [])
-    total_chars = sum(d.get("char_count", 0) for d in docs_list)
-    baseline_tokens = int(total_chars / 4)
-    
-    # Calculate optimized
-    history = st.session_state.get("retrieval_history", [])
-    latest_query = None
-    optimized_tokens = 0
-    
-    if history:
-        latest = history[0]
-        latest_query = latest.get("query")
-        if latest["type"] == "LangGraph (PDF)":
-            optimized_tokens = int(len(latest.get("merged_context_prompt", "")) / 4)
-        elif latest["type"] == "CodeGraph (AST)":
-            optimized_tokens = int(len(latest.get("context_retrieved", "")) / 4)
+    # Extract paired chat queries & responses
+    chat_details = []
+    pair_idx = 1
+    total_chat_opt_tokens = 0
+    total_prompt_tokens = 0
+
+    for idx, m in enumerate(chat_history):
+        if m.get("role") == "user":
+            u_prompt = m.get("content", "")
+            p_tokens = token_service.estimate_tokens(u_prompt)
+
+            a_msg = chat_history[idx + 1] if (idx + 1 < len(chat_history) and chat_history[idx + 1].get("role") == "assistant") else {}
+            a_answer = a_msg.get("content", "")
+            r_tokens = token_service.estimate_tokens(a_answer)
+
+            recs = a_msg.get("retrieval_records", [])
+            c_tokens = sum(r.get("context_tokens", 0) for r in recs)
             
-    st.markdown("### 📈 Cost & Token Optimization Comparison")
-    
-    if baseline_tokens == 0:
-        st.warning("Please upload guidelines / PDFs in Tab 1 to populate baseline metrics.")
+            # Extract unique systems used
+            sys_set = set()
+            for r in recs:
+                stype = r.get("type", "Graph")
+                smethod = r.get("retrieval_method", "")
+                if "Advanced" in smethod or smethod == "advanced":
+                    sys_set.add(f"{stype} Advanced")
+                elif "Internal" in smethod or smethod == "internal":
+                    sys_set.add(f"{stype} CLI")
+                else:
+                    sys_set.add(stype)
+            sys_used = ", ".join(sys_set) if sys_set else "Direct Harness"
+
+            single_opt = p_tokens + c_tokens + r_tokens
+            single_base = asset_baseline_single + p_tokens if asset_baseline_single > 0 else max(100, p_tokens * 10)
+            savings = (1.0 - (single_opt / single_base)) * 100.0 if single_base > 0 else 0.0
+
+            total_chat_opt_tokens += single_opt
+            total_prompt_tokens += p_tokens
+
+            chat_details.append({
+                "turn": pair_idx,
+                "query": u_prompt,
+                "sys_used": sys_used,
+                "p_tokens": p_tokens,
+                "c_tokens": c_tokens,
+                "r_tokens": r_tokens,
+                "single_opt": single_opt,
+                "single_base": single_base,
+                "savings": savings,
+                "recs": recs
+            })
+            pair_idx += 1
+
+    if not chat_details:
+        st.info("No chat queries executed yet. Submit a query in Tab 2 to track per-chat token consumption!")
     else:
-        col_base, col_opt, col_pct = st.columns(3)
-        with col_base:
-            st.metric("Baseline Model Context (Full PDF)", f"{baseline_tokens:,} tokens")
-            st.caption("Sending the entire raw PDF content to the LLM.")
-        with col_opt:
-            st.metric("Optimized Model Context (Graph-based)", f"{optimized_tokens:,} tokens")
-            st.caption("Sending only relevant sub-graphs & community summaries.")
-        with col_pct:
-            savings_pct = 100.0 if optimized_tokens == 0 else (100.0 - (optimized_tokens / baseline_tokens * 100.0))
-            st.metric("Context Size Reduction", f"{savings_pct:.1f}%")
-            st.caption("Optimization efficiency compared to baseline.")
-            
-        # Draw Bar Chart Comparison
+        # Render Table Summary
+        table_rows = []
+        for cd in chat_details:
+            table_rows.append({
+                "Chat Turn": f"Chat #{cd['turn']}",
+                "Query": cd["query"][:45] + "..." if len(cd["query"]) > 45 else cd["query"],
+                "Retrieval System": cd["sys_used"],
+                "Prompt Tokens": cd["p_tokens"],
+                "Context Tokens": cd["c_tokens"],
+                "Response Tokens": cd["r_tokens"],
+                "Optimized Total": cd["single_opt"],
+                "Raw Baseline": cd["single_base"],
+                "Savings %": f"{cd['savings']:.1f}%"
+            })
+
         import pandas as pd
-        chart_df = pd.DataFrame({
-            "Context Model": ["Baseline Model (Full PDF)", "Optimized Model (Graph-Based)"],
-            "Tokens": [baseline_tokens, optimized_tokens]
-        })
-        st.bar_chart(chart_df, x="Context Model", y="Tokens", color="#6366f1")
+        df_chats = pd.DataFrame(table_rows)
+        st.dataframe(df_chats, use_container_width=True)
+
+        # Expandable Detail Cards
+        for cd in chat_details:
+            with st.expander(f"💬 Chat #{cd['turn']}: `{cd['query'][:60]}` ({cd['sys_used']})", expanded=False):
+                cc1, cc2, cc3, cc4 = st.columns(4)
+                cc1.metric("Prompt Tokens", f"{cd['p_tokens']:,}")
+                cc2.metric("Context Tokens", f"{cd['c_tokens']:,}")
+                cc3.metric("Response Tokens", f"{cd['r_tokens']:,}")
+                cc4.metric("Chat Savings", f"{cd['savings']:.1f}%")
+                st.caption(f"**Single-Turn Baseline**: {cd['single_base']:,} tokens  |  **Optimized Total**: {cd['single_opt']:,} tokens")
+
+    st.markdown("---")
+
+    # ── Cumulative Total Comparison ──
+    st.markdown("### 📈 Cumulative Multi-Turn Comparison & Savings")
+    num_chats = len(chat_details)
+    
+    if num_chats == 0:
+        cum_baseline = asset_baseline_single if asset_baseline_single > 0 else 1000
+        cum_optimized = overhead_tokens
+        cum_savings_pct = 0.0
+    else:
+        # Baseline doubles/multiplies across N chat turns
+        cum_baseline = (num_chats * asset_baseline_single) + total_prompt_tokens
+        cum_optimized = overhead_tokens + total_chat_opt_tokens
+        cum_savings_pct = (1.0 - (cum_optimized / cum_baseline)) * 100.0 if cum_baseline > 0 else 0.0
+
+    col_base, col_opt, col_pct = st.columns(3)
+    with col_base:
+        st.metric("Total Raw Baseline (Multiplied)", f"{cum_baseline:,} tokens")
+        st.caption(f"Sending full raw Codebase ({codebase_tokens:,}) + PDF ({pdf_tokens:,}) for each of {max(1, num_chats)} chat turn(s).")
+    with col_opt:
+        st.metric("Total Optimized (Graph-Based)", f"{cum_optimized:,} tokens")
+        st.caption("Graph Overhead + Prompt + Derived Contexts + Responses across all chats.")
+    with col_pct:
+        st.metric("Net Token Reduction", f"{cum_savings_pct:.1f}%")
+        st.caption(f"Net optimization efficiency across {num_chats} chat turn(s).")
+
+    # Draw Cumulative Bar Chart
+    import pandas as pd
+    chart_df = pd.DataFrame({
+        "Context Approach": [
+            f"Raw Baseline ({max(1, num_chats)} Chat Turns)",
+            "Graph-Optimized (Overhead + All Chats)"
+        ],
+        "Total Tokens": [cum_baseline, cum_optimized]
+    })
+    st.bar_chart(chart_df, x="Context Approach", y="Total Tokens", color="#6366f1")

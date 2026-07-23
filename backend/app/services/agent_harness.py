@@ -92,17 +92,46 @@ class AgentHarness:
                 rectify=rectify,
             )
 
-            # Log CodeGraph retrieval details ALWAYS
-            ctx_retrieved = record.context or (f"Error: {record.error}" if record.status == "failed" else "No explicit source context retrieved.")
-            ans_text = record.answer if record.status == "completed" else f"Error: {record.error}"
+            # Build structured representations of selected nodes and edges for inspection
+            nodes_info = []
+            if record.selected_nodes:
+                for n in record.selected_nodes:
+                    nodes_info.append({
+                        "node_id": n.node_id,
+                        "type": n.node_type,
+                        "label": n.label,
+                        "file_path": n.file_path,
+                        "line_start": n.line_start,
+                        "line_end": n.line_end
+                    })
+            edges_info = []
+            if record.selected_edges:
+                for e in record.selected_edges:
+                    edges_info.append({
+                        "edge_id": e.edge_id,
+                        "type": e.edge_type,
+                        "src": e.source_node,
+                        "tgt": e.target_node
+                    })
 
-            st.session_state["retrieval_history"].insert(0, {
+            rec_entry = {
                 "timestamp": time.strftime("%H:%M:%S"),
                 "query": query,
                 "type": f"CodeGraph ({source_selection.upper()})",
+                "source_system": source_selection,
+                "retrieval_method": retrieval_method,
+                "retrieval_strategy": record.retrieval_strategy,
+                "max_nodes": max_nodes,
+                "max_neighbors": max_neighbors,
+                "graphify_mode": graphify_mode if source_selection == "graphify" else None,
+                "rectify_mode": rectify,
                 "context_retrieved": ctx_retrieved,
-                "answer": ans_text
-            })
+                "selected_nodes": nodes_info,
+                "selected_edges": edges_info,
+                "answer": ans_text,
+                "context_tokens": len(ctx_retrieved) // 4
+            }
+            st.session_state["retrieval_history"].insert(0, rec_entry)
 
             if record.status == "failed":
                 return f"Error querying CodeGraph: {record.error}"
@@ -113,9 +142,13 @@ class AgentHarness:
             st.session_state["retrieval_history"].insert(0, {
                 "timestamp": time.strftime("%H:%M:%S"),
                 "query": query,
-                "type": "CodeGraph (AST)",
+                "type": f"CodeGraph ({source_selection.upper()})",
+                "source_system": source_selection,
+                "retrieval_method": retrieval_method,
+                "retrieval_strategy": "Failed Query",
                 "context_retrieved": err_msg,
-                "answer": err_msg
+                "answer": err_msg,
+                "context_tokens": 0
             })
             return err_msg
 
@@ -134,9 +167,13 @@ class AgentHarness:
                 "timestamp": time.strftime("%H:%M:%S"),
                 "query": query,
                 "type": "LangGraph (PDF)",
+                "source_system": "langgraph",
+                "retrieval_method": "louvain_community_detection",
+                "retrieval_strategy": "Louvain Community Detection",
                 "ranked_communities": [],
                 "per_comm_details": [],
-                "merged_context_prompt": err_msg
+                "merged_context_prompt": err_msg,
+                "context_tokens": 0
             })
             return err_msg
             
@@ -171,14 +208,19 @@ class AgentHarness:
                     f"Summary: {summary_text}\n"
                     f"Intermediate Answer: {partial_ans}"
                 )
-                
+
+            merged_text = "\n\n".join(merged_context_parts)
             st.session_state["retrieval_history"].insert(0, {
                 "timestamp": time.strftime("%H:%M:%S"),
                 "query": query,
                 "type": "LangGraph (PDF)",
+                "source_system": "langgraph",
+                "retrieval_method": "louvain_community_detection",
+                "retrieval_strategy": "Louvain Community Detection + Hybrid Subgraph Search",
                 "ranked_communities": results.get("ranked_communities", []),
                 "per_comm_details": per_comm_details,
-                "merged_context_prompt": "\n\n".join(merged_context_parts)
+                "merged_context_prompt": merged_text,
+                "context_tokens": len(merged_text) // 4
             })
             
             return f"LangGraph Answer for '{query}':\n{results['final_answer']}"
@@ -188,9 +230,13 @@ class AgentHarness:
                 "timestamp": time.strftime("%H:%M:%S"),
                 "query": query,
                 "type": "LangGraph (PDF)",
+                "source_system": "langgraph",
+                "retrieval_method": "louvain_community_detection",
+                "retrieval_strategy": "Failed Query",
                 "ranked_communities": [],
                 "per_comm_details": [],
-                "merged_context_prompt": err_msg
+                "merged_context_prompt": err_msg,
+                "context_tokens": 0
             })
             return err_msg
 
