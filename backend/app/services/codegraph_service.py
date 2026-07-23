@@ -320,6 +320,17 @@ class CodeGraphService:
                 self._find_calls_in_node(node, source_bytes, graph_node.node_id, pending_calls)
             except Exception:
                 pass
+
+            parent_stack.append((kind, graph_node.node_id))
+            for child in node.children:
+                try:
+                    self._traverse_tree(
+                        child, source_bytes, rel_path, module_name, parent_stack,
+                        nodes, edges, symbol_index, pending_imports, pending_calls, pending_inherits
+                    )
+                except Exception:
+                    pass
+            parent_stack.pop()
             return
 
         for child in node.children:
@@ -332,13 +343,9 @@ class CodeGraphService:
                 pass
 
     def _find_calls_in_node(self, node, source_bytes: bytes, caller_id: str, pending_calls: list) -> None:
-        if node.type in CALL_NODE_TYPES:
-            call_name = None
-            for child in node.children:
-                if child.type in {"identifier", "attribute", "field_expression", "member_expression"}:
-                    call_name = source_bytes[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
-                    break
-            if call_name:
+        if node.type in CALL_NODE_TYPES and node.children:
+            call_name = source_bytes[node.children[0].start_byte : node.children[0].end_byte].decode("utf-8", errors="replace").strip()
+            if call_name and len(call_name) < 80 and not call_name.startswith("(") and not call_name.startswith("{"):
                 pending_calls.append((caller_id, call_name, node.start_point[0] + 1))
                 
         for child in node.children:
