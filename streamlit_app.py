@@ -225,9 +225,9 @@ def services():
         pipeline=pipeline,
     )
 
-    return storage, pipeline, repo_service, chat_service, llm_provider
+    return storage, pipeline, repo_service, chat_service, base_llm_provider, token_service
 
-storage, pipeline, repo_service, chat_service, base_llm_provider = services()
+storage, pipeline, repo_service, chat_service, base_llm_provider, token_service = services()
 
 # ── Sidebar Configurations (The Brain & Keys) ──
 
@@ -490,114 +490,114 @@ with main_tabs[0]:
 with main_tabs[1]:
     st.subheader("🌐 Visualizer Dashboard")
     
-    col_code, col_pdf = st.columns(2)
-    
-    with col_code:
-        st.markdown("### 📂 Codebase Graph Visualizer")
-        repo_id = st.session_state.get("repo_id")
-        if not repo_id:
-            st.warning("Upload a codebase in Tab 1 to visualize the Codebase Graph.")
+    # ── Section 1: Codebase Graph Visualizer (Full Width) ──
+    st.markdown("### 📂 Codebase Graph Visualizer")
+    repo_id = st.session_state.get("repo_id")
+    if not repo_id:
+        st.warning("Upload a codebase in Tab 1 to visualize the Codebase Graph.")
+    else:
+        view_mode = st.radio(
+            "Abstraction Level:",
+            ["Graphify (High-Level Architecture)", "CodeGraph (AST-Level Details)"],
+            horizontal=True,
+            key="codebase_visualizer_view_mode"
+        )
+        
+        if view_mode.startswith("Graphify"):
+            graph_doc = storage.load_graphify(repo_id)
+            graph_title = "Graphify Network"
         else:
-            view_mode = st.radio(
-                "Abstraction Level:",
-                ["Graphify (High-Level Architecture)", "CodeGraph (AST-Level Details)"],
-                horizontal=True,
-                key="codebase_visualizer_view_mode"
-            )
+            graph_doc = storage.load_codegraph(repo_id)
+            graph_title = "CodeGraph AST Network"
             
-            if view_mode.startswith("Graphify"):
-                graph_doc = storage.load_graphify(repo_id)
-                graph_title = "Graphify Network"
-            else:
-                graph_doc = storage.load_codegraph(repo_id)
-                graph_title = "CodeGraph AST Network"
-                
-            if not graph_doc:
-                st.error(f"Could not load {graph_title} file.")
-            else:
-                with st.spinner(f"Compiling {graph_title} visualization..."):
-                    # Map GraphDocument → NetworkX DiGraph (directed edges = call/import flow)
-                    G_code = nx.DiGraph()
-                    node_type_counts: dict[str, int] = {}
+        if not graph_doc:
+            st.error(f"Could not load {graph_title} file.")
+        else:
+            with st.spinner(f"Compiling {graph_title} visualization..."):
+                # Map GraphDocument → NetworkX DiGraph (directed edges = call/import flow)
+                G_code = nx.DiGraph()
+                node_type_counts: dict[str, int] = {}
 
-                    for node in graph_doc.nodes:
-                        if node.node_type == "cli_output":
-                            continue
-                        # Rich tooltip description: source snippet or file location
-                        desc = (node.source_snippet or "")[:500]
-                        if not desc:
-                            if node.file_path:
-                                desc = f"{node.file_path}:{node.line_start}"
-                            else:
-                                desc = f"{node.node_type}: {node.label}"
+                for node in graph_doc.nodes:
+                    if node.node_type == "cli_output":
+                        continue
+                    # Rich tooltip description: source snippet or file location
+                    desc = (node.source_snippet or "")[:500]
+                    if not desc:
+                        if node.file_path:
+                            desc = f"{node.file_path}:{node.line_start}"
+                        else:
+                            desc = f"{node.node_type}: {node.label}"
 
-                        node_type_counts[node.node_type] = node_type_counts.get(node.node_type, 0) + 1
-                        G_code.add_node(
-                            node.node_id,
-                            label=node.label,
-                            type=node.node_type,
-                            community_id=node.node_type,   # drives color grouping by type
-                            description=desc,
+                    node_type_counts[node.node_type] = node_type_counts.get(node.node_type, 0) + 1
+                    G_code.add_node(
+                        node.node_id,
+                        label=node.label,
+                        type=node.node_type,
+                        community_id=node.node_type,   # drives color grouping by type
+                        description=desc,
+                    )
+
+                for edge in graph_doc.edges:
+                    if G_code.has_node(edge.source_node) and G_code.has_node(edge.target_node):
+                        G_code.add_edge(
+                            edge.source_node,
+                            edge.target_node,
+                            relation_type=edge.edge_type,
                         )
 
-                    for edge in graph_doc.edges:
-                        if G_code.has_node(edge.source_node) and G_code.has_node(edge.target_node):
-                            G_code.add_edge(
-                                edge.source_node,
-                                edge.target_node,
-                                relation_type=edge.edge_type,
-                            )
+                mc1, mc2 = st.columns(2)
+                mc1.metric("Nodes", len(G_code.nodes))
+                mc2.metric("Edges", len(G_code.edges))
 
-                    mc1, mc2 = st.columns(2)
-                    mc1.metric("Nodes", len(G_code.nodes))
-                    mc2.metric("Edges", len(G_code.edges))
-
-                    try:
-                        code_html = graph_to_pyvis(G_code, height="500px")
-                        import streamlit.components.v1 as components
-                        components.html(code_html, height=520, scrolling=False)
-                    except Exception as e:
-                        st.error(f"Could not render {graph_title}: {e}")
-
-                    # Node-type legend
-                    legend_items = [
-                        ("module / file",      "#3B82F6",  "Blue",    ["module",  "file"]),
-                        ("class / component",  "#A855F7",  "Purple",  ["class",   "component"]),
-                        ("function",           "#60EFFF",  "Cyan",    ["function"]),
-                        ("method",             "#34D399",  "Emerald", ["method"]),
-                        ("import",             "#94A3B8",  "Slate",   ["import"]),
-                        ("external_symbol",    "#64748B",  "Grey",    ["external_symbol"]),
-                        ("concept",            "#F59E0B",  "Amber",   ["concept"]),
-                    ]
-                    legend_html = "<div style='display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;'>"
-                    for ltype, lcolor, lname, ltypes in legend_items:
-                        count = sum(node_type_counts.get(t, 0) for t in ltypes)
-                        if count > 0:
-                            legend_html += (
-                                f"<span style='display:inline-flex;align-items:center;gap:6px;"
-                                f"font-size:12px;color:#e2e8f0;background:rgba(255,255,255,0.05);"
-                                f"border-radius:6px;padding:3px 8px'>"
-                                f"<span style='width:11px;height:11px;border-radius:50%;"
-                                f"background:{lcolor};display:inline-block;flex-shrink:0'></span>"
-                                f"<span style='color:{lcolor};font-weight:600'>{lname}</span>"
-                                f" {ltype} <b>({count})</b></span>"
-                            )
-                    legend_html += "</div>"
-                    st.markdown(legend_html, unsafe_allow_html=True)
-                        
-    with col_pdf:
-        st.markdown("### 🕸️ LangGraph Unstructured Community Network")
-        G_pdf = st.session_state.get("unstructured_graph")
-        if G_pdf is None:
-            st.warning("Upload documents and build the LangGraph in Tab 1 to visualize the Network.")
-        else:
-            with st.spinner("Compiling LangGraph visualization..."):
                 try:
-                    pdf_html = graph_to_pyvis(G_pdf, height="500px")
+                    code_html = graph_to_pyvis(G_code, height="650px")
                     import streamlit.components.v1 as components
-                    components.html(pdf_html, height=520, scrolling=False)
+                    components.html(code_html, height=670, scrolling=False)
                 except Exception as e:
-                    st.error(f"Could not render LangGraph: {e}")
+                    st.error(f"Could not render {graph_title}: {e}")
+
+                # Node-type legend
+                legend_items = [
+                    ("module / file",      "#3B82F6",  "Blue",    ["module",  "file"]),
+                    ("class / component",  "#A855F7",  "Purple",  ["class",   "component"]),
+                    ("function",           "#60EFFF",  "Cyan",    ["function"]),
+                    ("method",             "#34D399",  "Emerald", ["method"]),
+                    ("import",             "#94A3B8",  "Slate",   ["import"]),
+                    ("external_symbol",    "#64748B",  "Grey",    ["external_symbol"]),
+                    ("concept",            "#F59E0B",  "Amber",   ["concept"]),
+                ]
+                legend_html = "<div style='display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;'>"
+                for ltype, lcolor, lname, ltypes in legend_items:
+                    count = sum(node_type_counts.get(t, 0) for t in ltypes)
+                    if count > 0:
+                        legend_html += (
+                            f"<span style='display:inline-flex;align-items:center;gap:6px;"
+                            f"font-size:12px;color:#e2e8f0;background:rgba(255,255,255,0.05);"
+                            f"border-radius:6px;padding:3px 8px'>"
+                            f"<span style='width:11px;height:11px;border-radius:50%;"
+                            f"background:{lcolor};display:inline-block;flex-shrink:0'></span>"
+                            f"<span style='color:{lcolor};font-weight:600'>{lname}</span>"
+                            f" {ltype} <b>({count})</b></span>"
+                        )
+                legend_html += "</div>"
+                st.markdown(legend_html, unsafe_allow_html=True)
+                    
+    st.markdown("---")
+
+    # ── Section 2: LangGraph Unstructured Community Network (Full Width) ──
+    st.markdown("### 🕸️ LangGraph Unstructured Community Network")
+    G_pdf = st.session_state.get("unstructured_graph")
+    if G_pdf is None:
+        st.warning("Upload documents and build the LangGraph in Tab 1 to visualize the Network.")
+    else:
+        with st.spinner("Compiling LangGraph visualization..."):
+            try:
+                pdf_html = graph_to_pyvis(G_pdf, height="650px")
+                import streamlit.components.v1 as components
+                components.html(pdf_html, height=670, scrolling=False)
+            except Exception as e:
+                st.error(f"Could not render LangGraph: {e}")
 
 with main_tabs[2]:
     st.subheader("💬 stateless Master Loop QA")

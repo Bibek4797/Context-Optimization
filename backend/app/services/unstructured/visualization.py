@@ -7,17 +7,22 @@ from pyvis.network import Network
 
 # Node type → color palette for CodeGraph/Graphify
 _NODE_TYPE_COLORS = {
-    "module":          "#3B82F6",   # Blue  – file/module
-    "file":            "#3B82F6",   # Blue  – graphify file
+    "module":          "#3B82F6",   # Blue   – file/module
+    "file":            "#3B82F6",   # Blue   – graphify file
     "class":           "#A855F7",   # Purple – class
     "component":       "#A855F7",   # Purple – graphify component
-    "function":        "#60EFFF",   # Cyan  – function
+    "function":        "#60EFFF",   # Cyan   – function
     "method":          "#34D399",   # Emerald – method
-    "import":          "#94A3B8",   # Slate – imports
-    "external_symbol": "#64748B",   # Grey  – external symbols
-    "concept":         "#F59E0B",   # Amber – graphify concept
-    "cli_output":      "#EF4444",   # Red   – cli result node
+    "import":          "#94A3B8",   # Slate  – imports
+    "external_symbol": "#64748B",   # Grey   – external symbols
+    "concept":         "#F59E0B",   # Amber  – graphify concept
+    "cli_output":      "#EF4444",   # Red    – cli result node
 }
+
+# Add uppercase / titlecase fallbacks
+for k, v in list(_NODE_TYPE_COLORS.items()):
+    _NODE_TYPE_COLORS[k.capitalize()] = v
+    _NODE_TYPE_COLORS[k.upper()] = v
 
 # Community-based palette (when community_id is meaningful, e.g. LangGraph)
 _COMMUNITY_COLORS = [
@@ -34,8 +39,8 @@ _COMMUNITY_COLORS = [
 ]
 
 # Canvas size pyvis renders into (pixels). Used to scale nx layout → pyvis coords.
-_CANVAS_W = 900
-_CANVAS_H = 480
+_CANVAS_W = 1200
+_CANVAS_H = 650
 
 
 def _compute_positions(G: nx.Graph) -> dict:
@@ -52,14 +57,12 @@ def _compute_positions(G: nx.Graph) -> dict:
     # Choose layout algorithm by graph size / density for best appearance
     try:
         if n <= 150:
-            # Kamada-Kawai gives the most readable layouts for small-medium graphs
-            pos = nx.kamada_kawai_layout(G, scale=1.0)
+            pos = nx.kamada_kawai_layout(G, scale=1.5)
         else:
-            # Spring (Fruchterman-Reingold) is faster for larger graphs
-            k_val = 2.0 / math.sqrt(n)
-            pos = nx.spring_layout(G, k=k_val, iterations=120, seed=42, scale=1.0)
+            k_val = 3.0 / math.sqrt(n)
+            pos = nx.spring_layout(G, k=k_val, iterations=120, seed=42, scale=1.5)
     except Exception:
-        pos = nx.spring_layout(G, k=None, iterations=60, seed=42, scale=1.0)
+        pos = nx.spring_layout(G, k=None, iterations=60, seed=42, scale=1.5)
 
     return pos
 
@@ -74,7 +77,7 @@ def _scale_pos(pos: dict, canvas_w: int = _CANVAS_W, canvas_h: int = _CANVAS_H) 
     min_y, max_y = min(ys), max(ys)
     span_x = max_x - min_x or 1.0
     span_y = max_y - min_y or 1.0
-    margin = 0.1  # 10% padding
+    margin = 0.08  # 8% padding
 
     scaled = {}
     for node_id, (x, y) in pos.items():
@@ -86,7 +89,7 @@ def _scale_pos(pos: dict, canvas_w: int = _CANVAS_W, canvas_h: int = _CANVAS_H) 
     return scaled
 
 
-def graph_to_pyvis(G: nx.Graph, height: str = "600px", width: str = "100%") -> str:
+def graph_to_pyvis(G: nx.Graph, height: str = "650px", width: str = "100%") -> str:
     net = Network(height=height, width=width, bgcolor="#0d0e15", font_color="#ffffff")
 
     # Degree map for node sizing
@@ -111,18 +114,20 @@ def graph_to_pyvis(G: nx.Graph, height: str = "600px", width: str = "100%") -> s
         cid = attrs.get("community_id", 0)
         desc = attrs.get("description", "")
 
-        title = f"<b>{label}</b>  •  <i>{ntype}</i>"
+        # Clean, human-readable HTML tooltip
+        title = f"<div style='font-family:sans-serif;padding:6px;background:#1e293b;color:#f8fafc;border-radius:6px;'><b style='font-size:13px;'>{label}</b>  •  <span style='color:#38bdf8;font-size:12px;'>{ntype}</span>"
         if desc:
-            snippet = desc[:250].replace("<", "&lt;").replace(">", "&gt;")
-            title += f"<br/><pre style='font-size:11px;max-width:360px;white-space:pre-wrap;color:#94a3b8;margin-top:4px'>{snippet}</pre>"
+            snippet = desc[:300].replace("<", "&lt;").replace(">", "&gt;")
+            title += f"<br/><pre style='font-size:11px;max-width:380px;white-space:pre-wrap;color:#94a3b8;margin-top:6px;background:#0f172a;padding:6px;border-radius:4px;'>{snippet}</pre>"
+        title += "</div>"
 
-        # Color: prefer node-type color for code graphs; fall back to community color for LangGraph
-        if ntype in _NODE_TYPE_COLORS:
-            color = _NODE_TYPE_COLORS[ntype]
-        elif has_communities:
-            color = community_colors.get(cid, _COMMUNITY_COLORS[0])
-        else:
-            color = _COMMUNITY_COLORS[0]
+        # Color: lookup in _NODE_TYPE_COLORS (with case-insensitive fallback)
+        color = _NODE_TYPE_COLORS.get(ntype, _NODE_TYPE_COLORS.get(str(ntype).lower(), None))
+        if not color:
+            if has_communities:
+                color = community_colors.get(cid, _COMMUNITY_COLORS[0])
+            else:
+                color = _COMMUNITY_COLORS[0]
 
         deg = degrees.get(node, 1)
         size = int(14 + (deg / max_deg) * 22)  # 14–36 px
