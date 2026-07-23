@@ -111,12 +111,10 @@ def graph_to_pyvis(G: nx.Graph, height: str = "600px", width: str = "100%") -> s
         cid = attrs.get("community_id", 0)
         desc = attrs.get("description", "")
 
-        title = f"<b>{label}</b><br/>Type: <i>{ntype}</i>"
-        if cid and cid != ntype:  # skip redundant community label when it equals type
-            title += f"<br/>Community: {cid}"
+        title = f"<b>{label}</b>  •  <i>{ntype}</i>"
         if desc:
-            snippet = desc[:300].replace("<", "&lt;").replace(">", "&gt;")
-            title += f"<br/><pre style='font-size:11px;max-width:360px;white-space:pre-wrap;color:#94a3b8'>{snippet}</pre>"
+            snippet = desc[:250].replace("<", "&lt;").replace(">", "&gt;")
+            title += f"<br/><pre style='font-size:11px;max-width:360px;white-space:pre-wrap;color:#94a3b8;margin-top:4px'>{snippet}</pre>"
 
         # Color: prefer node-type color for code graphs; fall back to community color for LangGraph
         if ntype in _NODE_TYPE_COLORS:
@@ -142,7 +140,7 @@ def graph_to_pyvis(G: nx.Graph, height: str = "600px", width: str = "100%") -> s
                 "highlight": {"background": "#ffffff", "border": color},
                 "hover": {"background": color, "border": "#ffffff"},
             },
-            group=cid,
+            # NOTE: do NOT set group= here — pyvis group colours override the explicit color dict above
             size=size,
             x=px,
             y=py,

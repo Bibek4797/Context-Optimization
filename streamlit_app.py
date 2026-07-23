@@ -515,20 +515,27 @@ with main_tabs[1]:
                         st.error(f"Could not render {graph_title}: {e}")
 
                     # Node-type legend
-                    legend_colors = {
-                        "module/file": "#3B82F6", "class/component": "#A855F7",
-                        "function": "#60EFFF", "method": "#34D399",
-                        "import": "#94A3B8", "external_symbol": "#64748B",
-                        "concept": "#F59E0B",
-                    }
-                    legend_html = "<div style='display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;'>"
-                    for ltype, lcolor in legend_colors.items():
-                        count = sum(node_type_counts.get(t, 0) for t in ltype.split("/"))
+                    legend_items = [
+                        ("module / file",      "#3B82F6",  "Blue",    ["module",  "file"]),
+                        ("class / component",  "#A855F7",  "Purple",  ["class",   "component"]),
+                        ("function",           "#60EFFF",  "Cyan",    ["function"]),
+                        ("method",             "#34D399",  "Emerald", ["method"]),
+                        ("import",             "#94A3B8",  "Slate",   ["import"]),
+                        ("external_symbol",    "#64748B",  "Grey",    ["external_symbol"]),
+                        ("concept",            "#F59E0B",  "Amber",   ["concept"]),
+                    ]
+                    legend_html = "<div style='display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;'>"
+                    for ltype, lcolor, lname, ltypes in legend_items:
+                        count = sum(node_type_counts.get(t, 0) for t in ltypes)
                         if count > 0:
                             legend_html += (
-                                f"<span style='display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#e2e8f0'>"
-                                f"<span style='width:12px;height:12px;border-radius:50%;background:{lcolor};display:inline-block'></span>"
-                                f"{ltype} <b>({count})</b></span>"
+                                f"<span style='display:inline-flex;align-items:center;gap:6px;"
+                                f"font-size:12px;color:#e2e8f0;background:rgba(255,255,255,0.05);"
+                                f"border-radius:6px;padding:3px 8px'>"
+                                f"<span style='width:11px;height:11px;border-radius:50%;"
+                                f"background:{lcolor};display:inline-block;flex-shrink:0'></span>"
+                                f"<span style='color:{lcolor};font-weight:600'>{lname}</span>"
+                                f" {ltype} <b>({count})</b></span>"
                             )
                     legend_html += "</div>"
                     st.markdown(legend_html, unsafe_allow_html=True)
@@ -602,6 +609,23 @@ with main_tabs[2]:
                     key="harness_max_neighbors_ui",
                     help="Limit on neighboring connections retrieved from the active AST nodes."
                 )
+
+        # Rectify Mode toggle — full width below both columns
+        st.markdown("---")
+        rectify_on = st.toggle(
+            "🔧 Rectify Mode (Error Correction)",
+            value=st.session_state.get("harness_rectify_mode", False),
+            key="harness_rectify_mode_ui",
+            help="When enabled, the LLM is instructed to produce structured <code_fix> blocks. "
+                 "These appear as interactive panels below each answer where you can Apply the fix "
+                 "(auto-rebuilds CodeGraph & Graphify) and Download the corrected file."
+        )
+        st.session_state["harness_rectify_mode"] = rectify_on
+        if rectify_on:
+            st.info(
+                "🚧 **Rectify Mode ON** — The LLM will now wrap proposed code fixes in `<code_fix>` XML. "
+                "After each answer, look for the 🔧 **Proposed Code Fix** panel below the response."
+            )
     
     # 🔍 Retrieval Inspector (Graph Context & Prompts)
     retrieval_hist = st.session_state.get("retrieval_history", [])

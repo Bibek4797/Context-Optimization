@@ -79,6 +79,8 @@ class AgentHarness:
             graphify_mode = st.session_state.get("harness_graphify_mode", "bfs")
             max_neighbors = st.session_state.get("harness_max_neighbors", 4)
 
+            rectify = st.session_state.get("harness_rectify_mode", False)
+
             record = self.chat_service.graph_optimized_qa(
                 repo_id=repo_id,
                 query=query,
@@ -86,7 +88,8 @@ class AgentHarness:
                 retrieval_method=retrieval_method,
                 max_nodes=max_nodes,
                 graphify_mode=graphify_mode,
-                max_neighbors=max_neighbors
+                max_neighbors=max_neighbors,
+                rectify=rectify,
             )
 
             # Log CodeGraph retrieval details ALWAYS
