@@ -432,6 +432,13 @@ if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []
 if "harness_todo" not in st.session_state:
     st.session_state["harness_todo"] = []
+else:
+    # Sanitize: ensure all items are dicts with 'step' and 'status' keys
+    st.session_state["harness_todo"] = [
+        item for item in st.session_state["harness_todo"]
+        if isinstance(item, dict) and "step" in item
+    ]
+
 if "unstructured_docs" not in st.session_state:
     st.session_state["unstructured_docs"] = []
 if "unstructured_graph" not in st.session_state:
@@ -448,8 +455,11 @@ def render_sidebar_todo(todo):
     with sidebar_todo_placeholder.container():
         if todo:
             for i, item in enumerate(todo):
-                status = item["status"]
-                step = item["step"]
+                # Defensive: handle any malformed item in session state
+                if not isinstance(item, dict):
+                    continue
+                status = item.get("status", "pending")
+                step = item.get("step") or item.get("task") or item.get("description") or str(item)
                 if status == "completed":
                     st.markdown(f"🟢 **Step {i+1}**: {step} (Complete)")
                 elif status == "in_progress":
@@ -458,6 +468,7 @@ def render_sidebar_todo(todo):
                     st.markdown(f"⚪ **Step {i+1}**: {step} (Pending)")
         else:
             st.info("Harness is idle. Submit a query to trigger planning.")
+
 
 render_sidebar_todo(st.session_state["harness_todo"])
 
