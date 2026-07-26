@@ -552,6 +552,9 @@ if "unstructured_community_embeddings" not in st.session_state:
 if "unstructured_node_embeddings" not in st.session_state:
     st.session_state["unstructured_node_embeddings"] = {}
 
+if "fix_applied" not in st.session_state:
+    st.session_state["fix_applied"] = False
+
 
 
 # Render static or last known checklist in sidebar
@@ -650,6 +653,7 @@ with main_tabs[0]:
                         st.session_state.repo_id = repo_meta.repo_id
                         st.session_state["repo_name"] = repo_meta.name
                         st.session_state["uploaded_codebase"] = True
+                        st.session_state["fix_applied"] = False
                         st.success(f"✅ Successfully built CodeGraph for repository: {repo_meta.name}")
                         st.metric("Total Files", repo_meta.stats.total_files)
                         st.metric("Total Lines", repo_meta.stats.total_lines)
@@ -657,7 +661,7 @@ with main_tabs[0]:
                     st.error(f"❌ Ingestion failed: {e}")
                     
         active_id = st.session_state.get("repo_id")
-        if active_id:
+        if active_id and st.session_state.get("fix_applied"):
             try:
                 import io, zipfile
                 def get_repo_zip(repo_id: str) -> bytes:
@@ -932,6 +936,7 @@ with main_tabs[2]:
                                     f"Backup saved as `{result.get('backup_path')}`. "
                                     "CodeGraph & Graphify rebuilt."
                                 )
+                                st.session_state["fix_applied"] = True
                                 # Store corrected content for download
                                 st.session_state[f"corrected_{fix_key}"] = (
                                     fix["filepath"],
