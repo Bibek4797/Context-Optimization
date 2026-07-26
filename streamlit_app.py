@@ -15,6 +15,13 @@ BACKEND_DIR = PROJECT_ROOT / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+# Streamlit Cloud naming conflict cleanup for 'app' namespace
+if "app" in sys.modules:
+    app_module = sys.modules["app"]
+    app_file = getattr(app_module, "__file__", "") or ""
+    if not app_file or "backend" not in str(app_file):
+        del sys.modules["app"]
+
 from app.models.schemas import GraphDocument, QueryRecord, RepoMetadata, TreeNode
 from app.services.analysis_pipeline import AnalysisPipeline
 from app.services.chat_service import ChatService
