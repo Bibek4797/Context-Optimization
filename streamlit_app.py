@@ -344,8 +344,9 @@ elif provider == "OpenRouter":
     model = st.sidebar.selectbox(
         "OpenRouter Model",
         [
+            "openrouter/free",
             "meta-llama/llama-3.3-70b-instruct",
-            "google/gemini-2.0-flash-lite-preview-v1:0:free",
+            "google/gemini-2.0-flash-lite-preview-v1:free",
             "deepseek/deepseek-r1:free",
             "qwen/qwen-2.5-72b-instruct:free"
         ]
