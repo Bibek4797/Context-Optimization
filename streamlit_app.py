@@ -631,8 +631,12 @@ with main_tabs[0]:
                 st.info(f"Active repository: **{meta.name}** (ID: {active_repo_id})")
                 
     with col2:
-        st.subheader("📄 Ingest Unstructured PDFs (Phase 2)")
-        pdf_uploads = st.file_uploader("Upload PDF or text guidelines (.pdf, .txt, .md)", type=["pdf", "txt", "md"], accept_multiple_files=True)
+        pdf_uploads = st.file_uploader(
+            "Upload PDF or text guidelines (.pdf, .txt, .md)",
+            type=["pdf", "txt", "md"],
+            accept_multiple_files=True,
+            key="pdf_uploader"
+        )
         if pdf_uploads:
             with st.spinner("Chunking files..."):
                 docs = process_uploaded_files(pdf_uploads)
@@ -845,8 +849,33 @@ with main_tabs[2]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-            # ── Code Fix Panels (assistant messages only) ──
+            # ── Per-Message Retrieval System Inspector & Code Fix Panels (assistant messages only) ──
             if msg["role"] == "assistant":
+                records = msg.get("retrieval_records", [])
+                if records:
+                    with st.expander(
+                        f"🔍 Retrieval System Inspector ({len(records)} query context{'s' if len(records) > 1 else ''} sent for this chat)",
+                        expanded=False
+                    ):
+                        for r_idx, rec in enumerate(records):
+                            st.markdown(f"**Query {r_idx+1}**: `{rec.get('query', '')}` (Engine: `{rec.get('type', '')}` at {rec.get('timestamp', 'N/A')})")
+                            if "LangGraph" in rec.get("type", ""):
+                                st.markdown("##### 🧩 Retrieved Louvain Communities & Partial Answers")
+                                per_comm = rec.get("per_comm_details", [])
+                                if not per_comm:
+                                    st.warning(rec.get("merged_context_prompt", "No communities retrieved."))
+                                else:
+                                    for item in per_comm:
+                                        st.markdown(f"**Community ID: {item.get('cid', 'N/A')}** (Score: {item.get('score', 0.0):.3f})")
+                                        st.write(f"**Anchors**: {item.get('anchors', [])}")
+                                        st.info(item.get("summary", ""))
+                                        st.success(item.get("partial_answer", ""))
+                                st.markdown("##### 📝 Merged Prompt Context (Sent to LLM)")
+                                st.code(rec.get("merged_context_prompt", "No context prompt available."), language="text")
+                            else:
+                                st.markdown("##### 🌲 Retrieved AST Codebase Subgraph & Definitions")
+                                st.code(rec.get("context_retrieved", "No explicit source context retrieved."), language="python")
+
                 fixes = _extract_code_fixes(msg["content"])
                 for fix_idx, fix in enumerate(fixes):
                     fix_key = f"fix_{msg_idx}_{fix_idx}"
