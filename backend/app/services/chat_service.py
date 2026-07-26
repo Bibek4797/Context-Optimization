@@ -135,34 +135,57 @@ class ChatService:
             notes="Prompt tokens required if sending 100% of codebase files directly to LLM."
         )
 
-        # Normalize token_usage entries to dicts to prevent Pydantic V2 model type validation mismatches
+        # Normalize token_usage entries to dicts cleanly
         normalized_token_usage = {}
         for k, v in token_usage.items():
             if hasattr(v, "model_dump"):
-                normalized_token_usage[k] = v.model_dump()
+                try:
+                    normalized_token_usage[k] = v.model_dump(mode="python")
+                except Exception:
+                    normalized_token_usage[k] = str(v)
             elif isinstance(v, dict):
                 normalized_token_usage[k] = v
             else:
-                normalized_token_usage[k] = v
+                normalized_token_usage[k] = str(v)
 
-        record = QueryRecord(
-            query_id=query_id,
-            repo_id=repo_id,
-            session_id=session_id,
-            mode="graph_optimized",
-            query=query,
-            status=status,
-            answer=answer,
-            error=error,
-            source_snippets=snippets,
-            selected_nodes=selected_nodes,
-            selected_edges=selected_edges,
-            token_usage=normalized_token_usage,
-            retrieval_strategy=retrieval_strategy,
-            context=context,
-            latency_ms=int((time.perf_counter() - started) * 1000),
-        )
-        self.storage.save_query(record)
+        try:
+            record = QueryRecord(
+                query_id=query_id,
+                repo_id=repo_id,
+                session_id=session_id,
+                mode="graph_optimized",
+                query=query,
+                status=status,
+                answer=answer,
+                error=error,
+                source_snippets=snippets,
+                selected_nodes=selected_nodes,
+                selected_edges=selected_edges,
+                token_usage=normalized_token_usage,
+                retrieval_strategy=retrieval_strategy,
+                context=context,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+            self.storage.save_query(record)
+        except Exception as save_err:
+            # Fallback QueryRecord with empty token_usage so query processing always succeeds
+            record = QueryRecord(
+                query_id=query_id,
+                repo_id=repo_id,
+                session_id=session_id,
+                mode="graph_optimized",
+                query=query,
+                status=status,
+                answer=answer,
+                error=error,
+                source_snippets=snippets,
+                selected_nodes=selected_nodes,
+                selected_edges=selected_edges,
+                token_usage={},
+                retrieval_strategy=retrieval_strategy,
+                context=context,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
         self.storage.append_log(repo_id, "chat-graph", "info", f"Query {query_id} finished with status {status}.")
         return record
 

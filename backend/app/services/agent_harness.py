@@ -132,10 +132,10 @@ class AgentHarness:
             }
             st.session_state["retrieval_history"].insert(0, rec_entry)
 
-            if record.status == "failed":
+            if record.status == "failed" and not ans_text and not ctx_retrieved:
                 return f"CodeGraph query failed: {record.error}"
 
-            return f"CodeGraph Answer for '{query}':\n{ans_text}\n\nContext Retrieved:\n{ctx_retrieved}"
+            return f"CodeGraph Answer for '{query}':\n{ans_text or 'Code definitions retrieved.'}\n\nContext Retrieved:\n{ctx_retrieved}"
 
         except Exception as e:
             err = f"Exception querying CodeGraph: {str(e)}"

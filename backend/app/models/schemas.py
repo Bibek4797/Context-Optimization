@@ -112,9 +112,9 @@ class GraphDocument(BaseModel):
 
 class TokenMeasurement(BaseModel):
     model_config = ConfigDict(protected_namespaces=(), arbitrary_types_allowed=True)
-    stage: str
-    tokens: int
-    count_type: CountType | str = CountType.estimated
+    stage: str = ""
+    tokens: int = 0
+    count_type: Any = "estimated"
     provider: str | None = None
     model: str | None = None
     notes: str | None = None

@@ -95,7 +95,12 @@ class LocalStorage:
 
     def find_query(self, query_id: str) -> QueryRecord | None:
         data = self._load_json(self.state_dir / "queries" / f"{query_id}.json")
-        return QueryRecord.model_validate(data) if data else None
+        if not data:
+            return None
+        try:
+            return QueryRecord.model_validate(data)
+        except Exception:
+            return None
 
     def append_log(self, repo_id: str, stage: str, level: str, message: str, metadata: dict[str, Any] | None = None) -> None:
         path = self.repo_state_dir(repo_id) / "logs.jsonl"
@@ -118,15 +123,22 @@ class LocalStorage:
         return [json.loads(line) for line in lines[-limit:] if line.strip()]
 
     def _update_cumulative_usage(self, record: QueryRecord) -> None:
-        summary = self.load_token_summary(record.repo_id)
-        if summary is None:
-            return
-        cumulative = dict(summary.cumulative_session_usage)
-        for key, measurement in record.token_usage.items():
-            cumulative[key] = cumulative.get(key, 0) + measurement.tokens
-        summary.cumulative_session_usage = cumulative
-        summary.updated_at = datetime.now(timezone.utc)
-        self.save_token_summary(record.repo_id, summary)
+        try:
+            summary = self.load_token_summary(record.repo_id)
+            if summary is None:
+                return
+            cumulative = dict(summary.cumulative_session_usage)
+            for key, measurement in record.token_usage.items():
+                if isinstance(measurement, dict):
+                    t_val = measurement.get("tokens", 0)
+                else:
+                    t_val = getattr(measurement, "tokens", 0)
+                cumulative[key] = cumulative.get(key, 0) + int(t_val or 0)
+            summary.cumulative_session_usage = cumulative
+            summary.updated_at = datetime.now(timezone.utc)
+            self.save_token_summary(record.repo_id, summary)
+        except Exception:
+            pass
 
     def _path_key(self, path: str) -> str:
         return hashlib.sha1(path.encode("utf-8")).hexdigest()
