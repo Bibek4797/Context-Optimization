@@ -63,22 +63,40 @@ from app.services.agent_harness import AgentHarness
 # ── Code Fix Extraction Helper ──
 def _extract_code_fixes(text: str) -> list[dict]:
     """Parse all <code_fix> XML blocks from an LLM answer and return structured dicts."""
+    if not text:
+        return []
+    # Normalize escaped/literal newlines first to prevent regex match failures
+    normalized = text.replace("\\\\n", "\n").replace("\\n", "\n")
     fixes = []
     pattern = re.compile(
-        r"<code_fix>\s*"
-        r"<filepath>(?P<filepath>[^<]+)</filepath>\s*"
-        r"<original_code>(?P<original>[\s\S]*?)</original_code>\s*"
-        r"<replacement_code>(?P<replacement>[\s\S]*?)</replacement_code>\s*"
+        r"<code_fix>[\s\n\r]*"
+        r"<filepath>(?P<filepath>.*?)</filepath>[\s\n\r]*"
+        r"<original_code>(?P<original>.*?)</original_code>[\s\n\r]*"
+        r"<replacement_code>(?P<replacement>.*?)</replacement_code>[\s\n\r]*"
         r"</code_fix>",
-        re.IGNORECASE,
+        re.IGNORECASE | re.DOTALL,
     )
-    for m in pattern.finditer(text):
+    for m in pattern.finditer(normalized):
         fixes.append({
             "filepath": m.group("filepath").strip(),
             "original": m.group("original").strip(),
             "replacement": m.group("replacement").strip(),
         })
     return fixes
+
+
+def _clean_xml_from_text(text: str) -> str:
+    """Remove <code_fix> blocks and normalize newlines for clean user display."""
+    if not text:
+        return ""
+    normalized = text.replace("\\\\n", "\n").replace("\\n", "\n")
+    clean = re.sub(
+        r"<code_fix>.*?</code_fix>",
+        "",
+        normalized,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+    return clean.strip()
 
 
 # ── Asset Token Helpers ──
@@ -822,7 +840,10 @@ with main_tabs[2]:
     # Render chat history
     for msg_idx, msg in enumerate(st.session_state["chat_history"]):
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                st.markdown(_clean_xml_from_text(msg["content"]))
+            else:
+                st.markdown(msg["content"])
 
             # ── Per-Message Retrieval System Inspector & Code Fix Panels (assistant messages only) ──
             if msg["role"] == "assistant":
