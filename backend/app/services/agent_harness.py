@@ -309,6 +309,36 @@ Perform the traversal, trace relationships, and summarize the findings. Return O
         while iteration < max_iterations:
             iteration += 1
             
+            # Check 92% Context Compression threshold (12,000 char budget * 0.92 = 11,040 chars)
+            history_lines_check = []
+            for step_idx, step in enumerate(history):
+                history_lines_check.append(f"Thought: {step.get('thought', '')} Action: {step.get('tool', '')} Observation: {step.get('observation', '')}")
+            current_history_size = len("\n".join(history_lines_check))
+            
+            if current_history_size >= 11040 and len(history) > 3:
+                # Keep first plan step and the most recent 2 steps intact; compress middle turns
+                recent_history = history[-2:]
+                first_step = history[0] if history[0].get("tool") == "todo_write" else None
+                middle_steps = history[1:-2] if first_step else history[:-2]
+                
+                compressed_lines = [
+                    f"- Turn called '{m.get('tool')}' and observed: {str(m.get('observation'))[:180]}..."
+                    for m in middle_steps
+                ]
+                summary_obs = "Summary of compressed previous iterations:\n" + "\n".join(compressed_lines)
+                
+                compressed_step = {
+                    "thought": "Automatically compressed older history to maintain 92% context safety threshold.",
+                    "tool": "history_compressor",
+                    "tool_input": "{}",
+                    "observation": summary_obs
+                }
+                
+                if first_step:
+                    history = [first_step, compressed_step] + recent_history
+                else:
+                    history = [compressed_step] + recent_history
+
             # 1. Construct prompt showing history
             history_lines = []
             for step_idx, step in enumerate(history):
@@ -330,7 +360,7 @@ User Question: {user_query}
 {history_text}
 
 ### Next Step:
-Provide the JSON response for the current iteration. Remember, if you have not written a plan yet, you must use `todo_write`.
+Provide the JSON response for the current iteration.
 """
             
             # 2. Call LLM
@@ -490,8 +520,8 @@ You have access to a Tool Dispatch Registry with the following tools:
    Args: {"task_description": "string describing the traversal", "graph_type": "codegraph" | "langgraph"}
 
 CRITICAL INSTRUCTIONS:
-- You MUST write a step-by-step plan using `todo_write` BEFORE executing any other queries.
-- Do NOT output any status update commands (such as updating step status). The backend will automatically manage and check off your plan tasks as you call the corresponding query tools.
+- For complex multi-step queries, write a step-by-step plan using `todo_write` before querying. For direct single-topic queries (asking directly about a single PDF fact or codebase file), you MAY skip `todo_write` and invoke `query_langgraph` or `query_codegraph` directly in Turn 1 to save API turns.
+- Do NOT output any status update commands. The backend automatically tracks and completes your plan tasks as you call the corresponding query tools.
 - Do not make assumptions. Query the appropriate graph using the tools.
 - All actions must be output as valid JSON matching the format below.
 
