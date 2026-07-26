@@ -656,45 +656,7 @@ with main_tabs[0]:
                 except Exception as e:
                     st.error(f"❌ Ingestion failed: {e}")
                     
-        # Check active & stored repositories
-        all_repos = storage.list_repos() if hasattr(storage, "list_repos") else []
-        if all_repos:
-            with st.expander("📂 Load Previously Indexed Codebase", expanded=False):
-                repo_options = {f"{r.name} ({r.stats.total_files} files)": r.repo_id for r in all_repos}
-                options = ["-- Select a codebase --"] + list(repo_options.keys())
-                
-                current_id = st.session_state.get("repo_id")
-                current_label = None
-                if current_id:
-                    for lbl, rid in repo_options.items():
-                        if rid == current_id:
-                            current_label = lbl
-                            break
-                
-                default_idx = options.index(current_label) if current_label in options else 0
-                
-                selected_label = st.selectbox(
-                    "Active Codebases on disk:",
-                    options=options,
-                    index=default_idx,
-                    key="active_repo_selector_ui",
-                    help="Select an existing indexed codebase to visualize or query."
-                )
-                
-                if selected_label != "-- Select a codebase --":
-                    selected_id = repo_options[selected_label]
-                    if selected_id != st.session_state.get("repo_id"):
-                        st.session_state["repo_id"] = selected_id
-                        meta = storage.load_repo_metadata(selected_id)
-                        if meta:
-                            st.session_state["repo_name"] = meta.name
-                            st.session_state["uploaded_codebase"] = True
-                        st.rerun()
-                    
-                    # Display clean error message if active repository failed
-                    meta = storage.load_repo_metadata(selected_id)
-                    if meta and (meta.status == RepoStatus.failed or meta.status.value == "failed"):
-                        st.error(f"⚠️ Codebase '{meta.name}' failed to ingest: {meta.error}")
+
                 
     with col2:
         pdf_uploads = st.file_uploader(
