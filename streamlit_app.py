@@ -419,17 +419,12 @@ st.sidebar.subheader("⚙️ Graph Engine & Retrieval Parameters")
 # 1. Codebase Graph System
 graph_system = st.sidebar.selectbox(
     "Codebase Graph System",
-    ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)", "Hybrid Codebase (CodeGraph + Graphify)"],
-    index=2 if st.session_state.get("harness_source_selection") == "hybrid" else (0 if st.session_state.get("harness_source_selection") != "graphify" else 1),
+    ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)"],
+    index=0 if st.session_state.get("harness_source_selection") != "graphify" else 1,
     key="sidebar_graph_system_select",
-    help="Select whether query context is extracted from CodeGraph, Graphify, or both."
+    help="Select whether query context is extracted from CodeGraph (AST nodes) or Graphify (architecture graph)."
 )
-if "Hybrid" in graph_system:
-    st.session_state["harness_source_selection"] = "hybrid"
-elif "Graphify" in graph_system:
-    st.session_state["harness_source_selection"] = "graphify"
-else:
-    st.session_state["harness_source_selection"] = "codegraph"
+st.session_state["harness_source_selection"] = "graphify" if "Graphify" in graph_system else "codegraph"
 
 # 2. Retrieval Engine
 retrieval_engine = st.sidebar.selectbox(
