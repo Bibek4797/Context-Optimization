@@ -111,9 +111,10 @@ class GraphDocument(BaseModel):
 
 
 class TokenMeasurement(BaseModel):
+    model_config = ConfigDict(protected_namespaces=(), arbitrary_types_allowed=True)
     stage: str
     tokens: int
-    count_type: CountType
+    count_type: CountType | str = CountType.estimated
     provider: str | None = None
     model: str | None = None
     notes: str | None = None
@@ -121,7 +122,7 @@ class TokenMeasurement(BaseModel):
 
 class TokenSummary(BaseModel):
     repo_id: str
-    stages: dict[str, TokenMeasurement] = Field(default_factory=dict)
+    stages: dict[str, Any] = Field(default_factory=dict)
     cumulative_session_usage: dict[str, int] = Field(default_factory=dict)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -184,7 +185,7 @@ class QueryRecord(BaseModel):
     source_snippets: list[SourceSnippet] = Field(default_factory=list)
     selected_nodes: list[GraphNode] = Field(default_factory=list)
     selected_edges: list[GraphEdge] = Field(default_factory=list)
-    token_usage: dict[str, TokenMeasurement] = Field(default_factory=dict)
+    token_usage: dict[str, Any] = Field(default_factory=dict)
     latency_ms: int = 0
     retrieval_strategy: str = "unknown"
     context: str = ""
