@@ -873,12 +873,7 @@ with main_tabs[2]:
                                     for item in per_comm:
                                         st.markdown(f"**Community ID: {item.get('cid', 'N/A')}** (Score: {item.get('score', 0.0):.3f})")
                                         st.write(f"**Anchors**: {item.get('anchors', [])}")
-                                        st.markdown("**Community Summary**:")
                                         st.info(item.get("summary", ""))
-                                        if item.get("local_context"):
-                                            st.markdown("**Nodes & Relations Selected**:")
-                                            st.code(item.get("local_context"), language="text")
-                                        st.markdown("**Community Partial Answer**:")
                                         st.success(item.get("partial_answer", ""))
                                 st.markdown("##### 📝 Merged Prompt Context (Sent to LLM)")
                                 st.code(rec.get("merged_context_prompt", "No context prompt available."), language="text")

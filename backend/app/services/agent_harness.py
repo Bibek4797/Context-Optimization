@@ -187,14 +187,12 @@ class AgentHarness:
                 per_comm_details.append({
                     "cid": cid, "score": score,
                     "summary": comm_ctx.get("summary", ""),
-                    "local_context": comm_ctx.get("local_context", ""),
                     "partial_answer": comm_ctx.get("partial_answer", ""),
                     "anchors": comm_ctx.get("anchors", [])
                 })
                 merged_context_parts.append(
                     f"--- Community {cid} (Score: {score:.3f}) ---\n"
                     f"Summary: {comm_ctx.get('summary', '')}\n"
-                    f"Nodes & Relations Selected:\n{comm_ctx.get('local_context', '')}\n"
                     f"Intermediate Answer: {comm_ctx.get('partial_answer', '')}"
                 )
 
