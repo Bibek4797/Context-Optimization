@@ -135,6 +135,16 @@ class ChatService:
             notes="Prompt tokens required if sending 100% of codebase files directly to LLM."
         )
 
+        # Normalize token_usage entries to dicts to prevent Pydantic V2 model type validation mismatches
+        normalized_token_usage = {}
+        for k, v in token_usage.items():
+            if hasattr(v, "model_dump"):
+                normalized_token_usage[k] = v.model_dump()
+            elif isinstance(v, dict):
+                normalized_token_usage[k] = v
+            else:
+                normalized_token_usage[k] = v
+
         record = QueryRecord(
             query_id=query_id,
             repo_id=repo_id,
@@ -147,7 +157,7 @@ class ChatService:
             source_snippets=snippets,
             selected_nodes=selected_nodes,
             selected_edges=selected_edges,
-            token_usage=token_usage,
+            token_usage=normalized_token_usage,
             retrieval_strategy=retrieval_strategy,
             context=context,
             latency_ms=int((time.perf_counter() - started) * 1000),

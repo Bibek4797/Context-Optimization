@@ -171,7 +171,7 @@ class ModelInfo(BaseModel):
 
 
 class QueryRecord(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
+    model_config = ConfigDict(protected_namespaces=(), arbitrary_types_allowed=True)
 
     query_id: str
     repo_id: str
