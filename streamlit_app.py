@@ -98,8 +98,8 @@ def _get_graph_overhead_tokens(repo_id: str | None) -> int:
     return overhead
 
 st.set_page_config(
-    page_title="Harness Execution Engine",
-    page_icon="🕸️",
+    page_title="Context Optimization Engine",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -299,9 +299,9 @@ def services():
 
 storage, pipeline, repo_service, chat_service, base_llm_provider, token_service = services()
 
-# ── Sidebar Configurations (The Brain & Keys) ──
+# ── Sidebar Configurations ──
 
-st.sidebar.title("🧠 Configuration & Brain")
+st.sidebar.title("⚙️ Engine Configuration")
 
 provider = st.sidebar.selectbox(
     "LLM Provider",
@@ -422,9 +422,9 @@ def ingest_uploaded_files(uploaded_files) -> RepoMetadata:
     gc.collect()
     return res
 
-# ── Live Sidebar Brain Checklist Placeholder ──
+# ── Live Sidebar Checklist Placeholder ──
 st.sidebar.markdown("---")
-st.sidebar.subheader("📋 Execution Plan (Brain)")
+st.sidebar.subheader("📋 Agent Execution Plan")
 sidebar_todo_placeholder = st.sidebar.empty()
 
 # Initialize session state variables
@@ -486,7 +486,14 @@ if _active_pdf_count > 0:
 st.markdown(
     f"""
     <div class="app-header">
-      <div class="app-header-logo">&#128302;</div>
+      <div class="app-header-logo">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="6" cy="6" r="3" fill="#60EFFF"/>
+          <circle cx="18" cy="6" r="3" fill="#818CF8"/>
+          <circle cx="12" cy="18" r="3" fill="#5EEAD4"/>
+          <path d="M6 6L18 6M6 6L12 18M18 6L12 18" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/>
+        </svg>
+      </div>
       <div class="app-header-text">
         <h1>Context Optimization Engine</h1>
         <p>Agentic Graph-Augmented Retrieval &amp; Multi-Turn QA Harness</p>
