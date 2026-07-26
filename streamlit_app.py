@@ -802,7 +802,7 @@ with main_tabs[2]:
             if retrieval_recs:
                 with st.expander("🔍 Show Retrieval Inspector & Derived Context Details", expanded=False):
                     for rec_idx, rec in enumerate(retrieval_recs):
-                        st.markdown(f"#### 🌐 Retrieval System: `{rec.get('type', 'Graph')}`")
+                        st.markdown(f"#### 🌐 Harness Execution Call #{len(retrieval_recs) - rec_idx}: `{rec.get('type', 'Graph')}`")
                         
                         # System Badges
                         st.markdown(
