@@ -622,21 +622,29 @@ with main_tabs[0]:
                     zip_files = [f for f in repo_upload if f.name.lower().endswith(".zip")]
                     if zip_files:
                         repo_meta = ingest_uploaded_zip(zip_files[0])
-                        st.session_state.repo_id = repo_meta.repo_id
-                        st.session_state["repo_name"] = repo_meta.name
-                        st.session_state["uploaded_codebase"] = True
-                        st.success(f"Successfully built CodeGraph for repository: {repo_meta.name}")
                     else:
                         repo_meta = ingest_uploaded_files(repo_upload)
+                    
+                    if repo_meta.status == RepoStatus.failed or repo_meta.status.value == "failed":
+                        st.error(f"❌ Ingestion failed: {repo_meta.error}")
+                        st.session_state["uploaded_codebase"] = False
+                        
+                        # Display diagnostics logs for why it failed
+                        logs = storage.load_logs(repo_meta.repo_id, limit=30)
+                        if logs:
+                            with st.expander("📋 Ingestion Logs & Diagnostics", expanded=True):
+                                for log in logs:
+                                    level_emoji = "🔴" if log.get("level") == "error" else "🟡" if log.get("level") == "warning" else "🔵"
+                                    st.write(f"{level_emoji} **[{log.get('stage', 'pipeline').upper()}]** {log.get('message')}")
+                    else:
                         st.session_state.repo_id = repo_meta.repo_id
                         st.session_state["repo_name"] = repo_meta.name
                         st.session_state["uploaded_codebase"] = True
-                        st.success(f"Successfully built CodeGraph for {len(repo_upload)} uploaded files.")
-                    
-                    st.metric("Total Files", repo_meta.stats.total_files)
-                    st.metric("Total Lines", repo_meta.stats.total_lines)
+                        st.success(f"✅ Successfully built CodeGraph for repository: {repo_meta.name}")
+                        st.metric("Total Files", repo_meta.stats.total_files)
+                        st.metric("Total Lines", repo_meta.stats.total_lines)
                 except Exception as e:
-                    st.error(f"Ingestion failed: {e}")
+                    st.error(f"❌ Ingestion failed: {e}")
                     
         # Check active & stored repositories
         all_repos = storage.list_repos() if hasattr(storage, "list_repos") else []
