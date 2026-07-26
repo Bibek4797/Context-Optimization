@@ -74,79 +74,82 @@ class ChatService:
             selected_edges = graph_context.selected_edges
             retrieval_strategy = graph_context.retrieval_strategy
             context = graph_context.context
-            token_usage["codegraph_graphify_optimized_context"] = graph_context.token_measurement
+            
+            # Store as clean dicts
+            tm = graph_context.token_measurement
+            token_usage["codegraph_graphify_optimized_context"] = {
+                "stage": getattr(tm, "stage", "codegraph_graphify_optimized_context"),
+                "tokens": getattr(tm, "tokens", 0),
+                "count_type": str(getattr(tm, "count_type", "exact")),
+                "notes": getattr(tm, "notes", None)
+            }
             
             prompt = self._graph_prompt(query, graph_context.context, rectify)
-            token_usage["llm_prompt_tokens"] = self._prompt_measurement(prompt)
+            prompt_tm = self._prompt_measurement(prompt)
+            token_usage["llm_prompt_tokens"] = {
+                "stage": "llm_prompt_tokens",
+                "tokens": getattr(prompt_tm, "tokens", 0),
+                "count_type": str(getattr(prompt_tm, "count_type", "exact"))
+            }
             
             llm_response = self.llm_provider.generate_answer(prompt)
             answer = llm_response.text
-            token_usage["llm_prompt_tokens"] = llm_response.prompt_tokens
-            token_usage["llm_response_tokens"] = llm_response.response_tokens
-            token_usage["total_per_query_tokens"] = llm_response.total_tokens
+            
+            if hasattr(llm_response, "prompt_tokens") and llm_response.prompt_tokens:
+                pt = llm_response.prompt_tokens
+                token_usage["llm_prompt_tokens"] = {
+                    "stage": "llm_prompt_tokens", "tokens": getattr(pt, "tokens", 0),
+                    "count_type": str(getattr(pt, "count_type", "exact")),
+                    "provider": getattr(pt, "provider", None), "model": getattr(pt, "model", None)
+                }
+            if hasattr(llm_response, "response_tokens") and llm_response.response_tokens:
+                rt = llm_response.response_tokens
+                token_usage["llm_response_tokens"] = {
+                    "stage": "llm_response_tokens", "tokens": getattr(rt, "tokens", 0),
+                    "count_type": str(getattr(rt, "count_type", "exact")),
+                    "provider": getattr(rt, "provider", None), "model": getattr(rt, "model", None)
+                }
+            if hasattr(llm_response, "total_tokens") and llm_response.total_tokens:
+                tt = llm_response.total_tokens
+                token_usage["total_per_query_tokens"] = {
+                    "stage": "total_per_query_tokens", "tokens": getattr(tt, "tokens", 0),
+                    "count_type": str(getattr(tt, "count_type", "exact")),
+                    "provider": getattr(tt, "provider", None), "model": getattr(tt, "model", None)
+                }
         except Exception as exc:
             status = "failed"
             error = str(exc)
-            context = f"Error building context: {exc}"
+            if not context:
+                context = f"Error building context: {exc}"
             
-            # Populate dummy token measurements so save/render doesn't fail
-            if "codegraph_graphify_optimized_context" not in token_usage:
-                token_usage["codegraph_graphify_optimized_context"] = TokenMeasurement(
-                    stage="codegraph_graphify_optimized_context",
-                    tokens=0,
-                    count_type=CountType.exact,
-                    notes=f"Error building context: {exc}"
-                )
-            if "llm_prompt_tokens" not in token_usage:
-                token_usage["llm_prompt_tokens"] = TokenMeasurement(
-                    stage="llm_prompt_tokens",
-                    tokens=0,
-                    count_type=CountType.exact,
-                    notes="Failed before prompt construction."
-                )
-            token_usage["llm_response_tokens"] = TokenMeasurement(
-                stage="llm_response_tokens",
-                tokens=0,
-                count_type=CountType.exact,
-                provider="gemini",
-                notes="No response generated due to retrieval failure.",
-            )
-            token_usage["total_per_query_tokens"] = TokenMeasurement(
-                stage="total_per_query_tokens",
-                tokens=0,
-                count_type=CountType.exact,
-                provider="gemini",
-                notes="Query execution failed.",
-            )
+            token_usage["codegraph_graphify_optimized_context"] = {
+                "stage": "codegraph_graphify_optimized_context", "tokens": 0, "count_type": "exact", "notes": str(exc)
+            }
+            token_usage["llm_prompt_tokens"] = {
+                "stage": "llm_prompt_tokens", "tokens": 0, "count_type": "exact", "notes": "Failed prompt construction."
+            }
+            token_usage["llm_response_tokens"] = {
+                "stage": "llm_response_tokens", "tokens": 0, "count_type": "exact", "notes": "No response generated."
+            }
+            token_usage["total_per_query_tokens"] = {
+                "stage": "total_per_query_tokens", "tokens": 0, "count_type": "exact", "notes": "Query failed."
+            }
             
-        # Compute Whole Codebase Baseline (General Chatbot approach: Concatenated whole repository code files)
+        # Compute Whole Codebase Baseline
         try:
             repo_tokens = self._get_total_repo_tokens(repo_id)
             query_prompt = self._standard_prompt(query, "[concatenated_files_placeholder]")
             query_tokens = self._prompt_measurement(query_prompt).tokens
             baseline_total = repo_tokens + query_tokens
         except Exception:
-            baseline_total = 10000 # Safety fallback
+            baseline_total = 10000
             
-        token_usage["whole_codebase_baseline"] = TokenMeasurement(
-            stage="whole_codebase_baseline",
-            tokens=baseline_total,
-            count_type=CountType.exact if self.token_service._encoding else CountType.estimated,
-            notes="Prompt tokens required if sending 100% of codebase files directly to LLM."
-        )
-
-        # Normalize token_usage entries to dicts cleanly
-        normalized_token_usage = {}
-        for k, v in token_usage.items():
-            if hasattr(v, "model_dump"):
-                try:
-                    normalized_token_usage[k] = v.model_dump(mode="python")
-                except Exception:
-                    normalized_token_usage[k] = str(v)
-            elif isinstance(v, dict):
-                normalized_token_usage[k] = v
-            else:
-                normalized_token_usage[k] = str(v)
+        token_usage["whole_codebase_baseline"] = {
+            "stage": "whole_codebase_baseline",
+            "tokens": baseline_total,
+            "count_type": "exact" if self.token_service._encoding else "estimated",
+            "notes": "Prompt tokens required if sending 100% of codebase files directly to LLM."
+        }
 
         try:
             record = QueryRecord(
@@ -161,14 +164,13 @@ class ChatService:
                 source_snippets=snippets,
                 selected_nodes=selected_nodes,
                 selected_edges=selected_edges,
-                token_usage=normalized_token_usage,
+                token_usage=token_usage,
                 retrieval_strategy=retrieval_strategy,
                 context=context,
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )
             self.storage.save_query(record)
         except Exception as save_err:
-            # Fallback QueryRecord with empty token_usage so query processing always succeeds
             record = QueryRecord(
                 query_id=query_id,
                 repo_id=repo_id,
@@ -177,7 +179,7 @@ class ChatService:
                 query=query,
                 status=status,
                 answer=answer,
-                error=error,
+                error=error or str(save_err),
                 source_snippets=snippets,
                 selected_nodes=selected_nodes,
                 selected_edges=selected_edges,
