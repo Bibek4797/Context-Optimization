@@ -32,8 +32,11 @@ if str(BACKEND_DIR) not in sys.path:
 # Force reload of all backend modules to prevent Streamlit Cloud from using stale cached versions in memory,
 # and resolve any clashing 'app' naming conflict with Streamlit Cloud's internal runner.
 for mod_name in list(sys.modules.keys()):
-    if mod_name == "app" or mod_name.startswith("app."):
-        del sys.modules[mod_name]
+    if "app" in mod_name or "backend" in mod_name or "schemas" in mod_name:
+        try:
+            del sys.modules[mod_name]
+        except Exception:
+            pass
 
 from app.models.schemas import GraphDocument, QueryRecord, RepoMetadata, TreeNode, RepoStatus
 from app.services.analysis_pipeline import AnalysisPipeline
