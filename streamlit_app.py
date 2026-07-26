@@ -956,11 +956,11 @@ with main_tabs[3]:
                     sys_set.add(stype)
             sys_used = ", ".join(sys_set) if sys_set else "Direct Harness"
 
-            single_opt = p_tokens + c_tokens + r_tokens
-            single_base = asset_baseline_single + p_tokens if asset_baseline_single > 0 else max(100, p_tokens * 10)
+            single_opt = c_tokens
+            single_base = asset_baseline_single if asset_baseline_single > 0 else max(100, c_tokens * 10)
             savings = (1.0 - (single_opt / single_base)) * 100.0 if single_base > 0 else 0.0
 
-            total_chat_opt_tokens += single_opt
+            total_chat_opt_tokens += c_tokens
             total_prompt_tokens += p_tokens
 
             chat_details.append({
@@ -987,12 +987,9 @@ with main_tabs[3]:
                 "Chat Turn": f"Chat #{cd['turn']}",
                 "Query": cd["query"][:45] + "..." if len(cd["query"]) > 45 else cd["query"],
                 "Retrieval System": cd["sys_used"],
-                "Prompt Tokens": cd["p_tokens"],
-                "Context Tokens": cd["c_tokens"],
-                "Response Tokens": cd["r_tokens"],
-                "Optimized Total": cd["single_opt"],
-                "Raw Baseline": cd["single_base"],
-                "Savings %": f"{cd['savings']:.1f}%"
+                "Derived Context Tokens": cd["c_tokens"],
+                "Raw Asset Baseline": cd["single_base"],
+                "Context Savings %": f"{cd['savings']:.1f}%"
             })
 
         import pandas as pd
@@ -1004,10 +1001,10 @@ with main_tabs[3]:
             with st.expander(f"💬 Chat #{cd['turn']}: `{cd['query'][:60]}` ({cd['sys_used']})", expanded=False):
                 cc1, cc2, cc3, cc4 = st.columns(4)
                 cc1.metric("Prompt Tokens", f"{cd['p_tokens']:,}")
-                cc2.metric("Context Tokens", f"{cd['c_tokens']:,}")
+                cc2.metric("Derived Context Tokens", f"{cd['c_tokens']:,}")
                 cc3.metric("Response Tokens", f"{cd['r_tokens']:,}")
-                cc4.metric("Chat Savings", f"{cd['savings']:.1f}%")
-                st.caption(f"**Single-Turn Baseline**: {cd['single_base']:,} tokens  |  **Optimized Total**: {cd['single_opt']:,} tokens")
+                cc4.metric("Context Reduction", f"{cd['savings']:.1f}%")
+                st.caption(f"**Raw Asset Baseline Context**: {cd['single_base']:,} tokens  |  **Derived Graph Context**: {cd['c_tokens']:,} tokens")
 
     st.markdown("---")
 
@@ -1021,19 +1018,19 @@ with main_tabs[3]:
         cum_savings_pct = 0.0
     else:
         # Baseline doubles/multiplies across N chat turns
-        cum_baseline = (num_chats * asset_baseline_single) + total_prompt_tokens
+        cum_baseline = num_chats * asset_baseline_single
         cum_optimized = overhead_tokens + total_chat_opt_tokens
         cum_savings_pct = (1.0 - (cum_optimized / cum_baseline)) * 100.0 if cum_baseline > 0 else 0.0
 
     col_base, col_opt, col_pct = st.columns(3)
     with col_base:
-        st.metric("Total Raw Baseline (Multiplied)", f"{cum_baseline:,} tokens")
-        st.caption(f"Sending full raw Codebase ({codebase_tokens:,}) + PDF ({pdf_tokens:,}) for each of {max(1, num_chats)} chat turn(s).")
+        st.metric("Total Raw Asset Baseline", f"{cum_baseline:,} tokens")
+        st.caption(f"Raw Codebase ({codebase_tokens:,}) + PDF ({pdf_tokens:,}) across {max(1, num_chats)} chat turn(s).")
     with col_opt:
-        st.metric("Total Optimized (Graph-Based)", f"{cum_optimized:,} tokens")
-        st.caption("Graph Overhead + Prompt + Derived Contexts + Responses across all chats.")
+        st.metric("Total Graph-Derived Context", f"{cum_optimized:,} tokens")
+        st.caption("Graph Construction Overhead + Derived Subgraph Contexts across all chats.")
     with col_pct:
-        st.metric("Net Token Reduction", f"{cum_savings_pct:.1f}%")
+        st.metric("Net Context Reduction Efficiency", f"{cum_savings_pct:.1f}%")
         st.caption(f"Net optimization efficiency across {num_chats} chat turn(s).")
 
     # Draw Cumulative Bar Chart

@@ -184,10 +184,10 @@ class ChatService:
                 "Make sure that the <original_code> block you target matches the codebase content exactly, character-for-character."
             )
         return (
-            "You are a graph-aware repository QA assistant. Use the selected CodeGraph and Graphify nodes, "
-            "relationships, and snippets to answer. Prefer precise relationships over broad guesses. "
-            "Cite files, lines, and relevant graph nodes. If the graph context is insufficient, say so. "
-            "Be extremely concise, direct, and brief in your answer. Avoid verbose explanations."
+            "You are an expert repository software architect. Use the selected CodeGraph and Graphify context to answer. "
+            "CRITICAL FORMATTING: Answer the question directly, clearly, and concisely. "
+            "Do NOT include meta-commentary, self-referential filler, or technical jargon such as 'based on the graph context', 'derived from nodes', or 'according to the AST traversal'. "
+            "Provide a clean, direct, natural response."
             f"{rectify_str}\n\n"
             f"Question:\n{query}\n\n"
             f"Optimized graph context:\n{context}"

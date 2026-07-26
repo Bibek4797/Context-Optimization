@@ -525,6 +525,11 @@ CRITICAL INSTRUCTIONS:
 - Do not make assumptions. Query the appropriate graph using the tools.
 - All actions must be output as valid JSON matching the format below.
 
+CRITICAL RESPONSE FORMATTING FOR FINAL ANSWER:
+- Your final_answer MUST be direct, clear, concise, and natural.
+- Do NOT include any meta-commentary, technical jargon, or self-referential filler such as "based on the codebase graph", "derived from community 0", "according to the AST traversal", "we found that", or listing entity types explicitly (e.g. do NOT write: "The relevant entities involved are X, a person, and Y, an organization").
+- Answer the user's question directly and concisely as a senior software architect.
+
 Output Format:
 Your response must be a single, valid JSON object containing either a tool call or the final answer.
 To call a tool, output:
