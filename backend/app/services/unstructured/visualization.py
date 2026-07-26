@@ -90,6 +90,14 @@ def _scale_pos(pos: dict, canvas_w: int = _CANVAS_W, canvas_h: int = _CANVAS_H) 
 
 
 def graph_to_pyvis(G: nx.Graph, height: str = "650px", width: str = "100%") -> str:
+    import gc
+    
+    # Scale Safety Protection: Sub-sample top 200 central nodes if graph exceeds 200 nodes to prevent RAM/browser crash
+    if len(G) > 200:
+        degrees = dict(G.degree())
+        top_nodes = sorted(degrees.keys(), key=lambda n: degrees[n], reverse=True)[:200]
+        G = G.subgraph(top_nodes).copy()
+
     net = Network(height=height, width=width, bgcolor="#0d0e15", font_color="#ffffff")
 
     # Degree map for node sizing
@@ -234,6 +242,7 @@ def graph_to_pyvis(G: nx.Graph, height: str = "650px", width: str = "100%") -> s
         except Exception:
             pass
 
+    gc.collect()
     return html_code
 
 

@@ -315,6 +315,7 @@ chat_service.llm_provider = active_llm
 
 # Ingest ZIP / files helpers
 def ingest_uploaded_zip(uploaded_file) -> RepoMetadata:
+    import gc
     repo_id = uuid4().hex
     repo_name = clean_repo_name(Path(uploaded_file.name).stem)
     upload_path = storage.uploads_dir / f"{repo_id}.zip"
@@ -324,9 +325,12 @@ def ingest_uploaded_zip(uploaded_file) -> RepoMetadata:
     if source_dir.exists():
         shutil.rmtree(source_dir)
     safe_extract_zip(upload_path, source_dir)
-    return pipeline.analyze_existing(name=repo_name, source_dir=source_dir, origin="upload", repo_id=repo_id)
+    res = pipeline.analyze_existing(name=repo_name, source_dir=source_dir, origin="upload", repo_id=repo_id)
+    gc.collect()
+    return res
 
 def ingest_uploaded_files(uploaded_files) -> RepoMetadata:
+    import gc
     repo_id = uuid4().hex
     if len(uploaded_files) == 1:
         repo_name = clean_repo_name(Path(uploaded_files[0].name).stem)
@@ -338,7 +342,9 @@ def ingest_uploaded_files(uploaded_files) -> RepoMetadata:
         dest = source_dir / f.name
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(f.getbuffer())
-    return pipeline.analyze_existing(name=repo_name, source_dir=source_dir, origin="file_upload", repo_id=repo_id)
+    res = pipeline.analyze_existing(name=repo_name, source_dir=source_dir, origin="file_upload", repo_id=repo_id)
+    gc.collect()
+    return res
 
 # ── Live Sidebar Brain Checklist Placeholder ──
 st.sidebar.markdown("---")
