@@ -389,10 +389,11 @@ def get_configured_llm_provider():
 active_llm = get_configured_llm_provider()
 chat_service.llm_provider = active_llm
 
-# ── Sidebar Graph Retrieval & Priority Controls ──
+# ── Sidebar Graph Retrieval & Search Parameters ──
 st.sidebar.markdown("---")
-st.sidebar.subheader("🕸️ Graph Engine & Priority")
+st.sidebar.subheader("⚙️ Graph Engine & Retrieval Parameters")
 
+# 1. Codebase Graph System
 graph_system = st.sidebar.selectbox(
     "Codebase Graph System",
     ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)"],
@@ -402,6 +403,17 @@ graph_system = st.sidebar.selectbox(
 )
 st.session_state["harness_source_selection"] = "graphify" if "Graphify" in graph_system else "codegraph"
 
+# 2. Retrieval Engine
+retrieval_engine = st.sidebar.selectbox(
+    "Retrieval Engine",
+    ["Native/Internal CLI Engine", "Advanced Hybrid Scoring (BM25 + PageRank)"],
+    index=0 if st.session_state.get("harness_retrieval_method") != "advanced" else 1,
+    key="sidebar_retrieval_engine_select",
+    help="Native CLI uses command-line query tools. Advanced Hybrid uses PageRank + BM25 search."
+)
+st.session_state["harness_retrieval_method"] = "advanced" if "Advanced" in retrieval_engine else "internal"
+
+# 3. Source Priority Strategy
 source_pref = st.sidebar.selectbox(
     "Source Priority Strategy",
     ["Auto (Smart Selection)", "Code-First (CodeGraph / Graphify)", "PDF-First (LangGraph Document RAG)"],
@@ -415,6 +427,45 @@ elif "PDF-First" in source_pref:
     st.session_state["source_preference"] = "pdf_first"
 else:
     st.session_state["source_preference"] = "auto"
+
+# 4. Rectify Mode (Error Correction)
+rectify_on = st.sidebar.toggle(
+    "🔧 Rectify Mode (Error Correction)",
+    value=st.session_state.get("harness_rectify_mode", False),
+    key="sidebar_rectify_mode_ui",
+    help="When enabled, the LLM produces structured <code_fix> blocks for automatic code updates."
+)
+st.session_state["harness_rectify_mode"] = rectify_on
+if rectify_on:
+    st.sidebar.info("🔧 **Rectify Mode ON** — Structured code fixes enabled.")
+
+# 5. Sliders: Max Nodes & Max Neighbors / Traversal Strategy
+st.session_state["harness_max_nodes"] = st.sidebar.slider(
+    "Max Nodes (Context Budget)",
+    min_value=2,
+    max_value=30,
+    value=st.session_state.get("harness_max_nodes", 8),
+    key="sidebar_max_nodes_ui"
+)
+
+if st.session_state["harness_source_selection"] == "graphify":
+    graphify_mode_label = st.sidebar.radio(
+        "Graphify Traversal Strategy",
+        ["Broad Architecture (BFS)", "Deep Execution Path (DFS)"],
+        index=0 if st.session_state.get("harness_graphify_mode") != "dfs" else 1,
+        key="sidebar_graphify_mode_ui"
+    )
+    st.session_state["harness_graphify_mode"] = "dfs" if "DFS" in graphify_mode_label else "bfs"
+    st.session_state["harness_max_neighbors"] = 4
+else:
+    st.session_state["harness_max_neighbors"] = st.sidebar.slider(
+        "Max Neighbors (AST Hops)",
+        min_value=1,
+        max_value=15,
+        value=st.session_state.get("harness_max_neighbors", 4),
+        key="sidebar_max_neighbors_ui"
+    )
+
 
 
 # Ingest ZIP / files helpers
@@ -749,76 +800,6 @@ with main_tabs[1]:
 
 with main_tabs[2]:
     st.subheader("💬 stateless Master Loop QA")
-    
-    # ⚙️ Retrieval & Search Parameters Configurator
-    with st.expander("⚙️ Codebase Retrieval & Search Parameters", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            source_selection_label = st.selectbox(
-                "Default Retrieval System",
-                ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)"],
-                index=0,
-                key="harness_source_selection_ui",
-                help="Choose which graph to query for codebase context."
-            )
-            st.session_state["harness_source_selection"] = "graphify" if "Graphify" in source_selection_label else "codegraph"
-            
-            retrieval_method_label = st.selectbox(
-                "Retrieval Engine",
-                ["Native/Internal CLI (with Python Fallback)", "Advanced Hybrid Scoring (Python)"],
-                index=0,
-                key="harness_retrieval_method_ui",
-                help="Internal CLI uses native command line query engines. Advanced Hybrid uses global PageRank + BM25 search."
-            )
-            st.session_state["harness_retrieval_method"] = "advanced" if "Advanced" in retrieval_method_label else "internal"
-            
-        with c2:
-            st.session_state["harness_max_nodes"] = st.slider(
-                "Max Nodes (Context Budget)",
-                min_value=2,
-                max_value=30,
-                value=8,
-                key="harness_max_nodes_ui",
-                help="Maximum number of node snippets to feed into LLM query context."
-            )
-            
-            # Conditionally render fields
-            if st.session_state["harness_source_selection"] == "graphify":
-                graphify_mode_label = st.radio(
-                    "Graphify Traversal Strategy",
-                    ["Broad Architecture (BFS)", "Deep Execution Path (DFS)"],
-                    index=0,
-                    key="harness_graphify_mode_ui",
-                    help="BFS explores components broadly. DFS follows execution sequences deeply."
-                )
-                st.session_state["harness_graphify_mode"] = "dfs" if "DFS" in graphify_mode_label else "bfs"
-                st.session_state["harness_max_neighbors"] = 4 # default fallback
-            else:
-                st.session_state["harness_max_neighbors"] = st.slider(
-                    "Max Neighbors (AST Hops)",
-                    min_value=1,
-                    max_value=15,
-                    value=4,
-                    key="harness_max_neighbors_ui",
-                    help="Limit on neighboring connections retrieved from the active AST nodes."
-                )
-
-        # Rectify Mode toggle — full width below both columns
-        st.markdown("---")
-        rectify_on = st.toggle(
-            "🔧 Rectify Mode (Error Correction)",
-            value=st.session_state.get("harness_rectify_mode", False),
-            key="harness_rectify_mode_ui",
-            help="When enabled, the LLM is instructed to produce structured <code_fix> blocks. "
-                 "These appear as interactive panels below each answer where you can Apply the fix "
-                 "(auto-rebuilds CodeGraph & Graphify) and Download the corrected file."
-        )
-        st.session_state["harness_rectify_mode"] = rectify_on
-        if rectify_on:
-            st.info(
-                "🚧 **Rectify Mode ON** — The LLM will now wrap proposed code fixes in `<code_fix>` XML. "
-                "After each answer, look for the 🔧 **Proposed Code Fix** panel below the response."
-            )
     
     # 🔍 Retrieval Inspector (Graph Context & Prompts)
     retrieval_hist = st.session_state.get("retrieval_history", [])
