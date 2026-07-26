@@ -654,6 +654,20 @@ with main_tabs[0]:
                     st.session_state["uploaded_codebase"] = True
                 st.rerun()
                 
+            # Display active repository status & log tail for diagnostic clarity
+            meta = storage.load_repo_metadata(selected_id)
+            if meta:
+                st.write(f"**Ingestion Status**: `{meta.status}`")
+                if meta.error:
+                    st.error(f"**Ingestion Error**: {meta.error}")
+                
+                logs = storage.load_logs(selected_id, limit=30)
+                if logs:
+                    with st.expander("📋 Pipeline Ingestion Logs / Diagnostics", expanded=meta.status == "failed"):
+                        for log in logs:
+                            level_emoji = "🔴" if log.get("level") == "error" else "🟡" if log.get("level") == "warning" else "🔵"
+                            st.write(f"{level_emoji} **[{log.get('stage', 'pipeline').upper()}]** {log.get('message')}")
+                
     with col2:
         pdf_uploads = st.file_uploader(
             "Upload PDF or text guidelines (.pdf, .txt, .md)",
