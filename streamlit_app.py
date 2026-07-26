@@ -110,9 +110,9 @@ st.markdown(
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
     .block-container {
-        padding-top: 2rem !important;
-        padding-left: 3rem !important;
-        padding-right: 3rem !important;
+        padding-top: 1.5rem !important;
+        padding-left: 2.5rem !important;
+        padding-right: 2.5rem !important;
         max-width: 96% !important;
     }
     .stApp {
@@ -123,51 +123,121 @@ st.markdown(
     h1, h2, h3, h4, h5, h6 {
         font-family: 'Outfit', sans-serif !important;
     }
-    .title-gradient {
+    /* ── App Header ── */
+    .app-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 18px 0 14px 0;
+        border-bottom: 1px solid rgba(99, 102, 241, 0.18);
+        margin-bottom: 22px;
+    }
+    .app-header-logo {
+        width: 42px;
+        height: 42px;
+        background: linear-gradient(135deg, #6366f1, #0d9488);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        flex-shrink: 0;
+    }
+    .app-header-text h1 {
+        margin: 0 !important;
+        padding: 0 !important;
+        font-size: 1.55rem !important;
+        font-weight: 800 !important;
         background: linear-gradient(135deg, #6366F1 0%, #60EFFF 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        font-weight: 800 !important;
-        letter-spacing: -0.5px !important;
-        margin-bottom: 25px !important;
+        line-height: 1.2 !important;
     }
+    .app-header-text p {
+        margin: 2px 0 0 0 !important;
+        font-size: 0.78rem !important;
+        color: #718096 !important;
+        letter-spacing: 0.04em;
+    }
+    .app-status-pill {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    .pill {
+        background: rgba(99, 102, 241, 0.1);
+        border: 1px solid rgba(99, 102, 241, 0.25);
+        color: #818cf8;
+        border-radius: 20px;
+        padding: 4px 12px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        font-family: 'Outfit', sans-serif;
+        white-space: nowrap;
+    }
+    .pill.teal {
+        background: rgba(13, 148, 136, 0.1);
+        border-color: rgba(13, 148, 136, 0.3);
+        color: #5eead4;
+    }
+    /* ── Sidebar ── */
     [data-testid="stSidebar"] {
         background-color: rgba(13, 14, 21, 0.95) !important;
         border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
     }
+    /* ── Tabs ── */
     div[data-baseweb="tab-list"] {
         background-color: rgba(255, 255, 255, 0.02) !important;
         border-radius: 12px !important;
         padding: 6px !important;
         border: 1px solid rgba(255, 255, 255, 0.05) !important;
         gap: 8px !important;
+        margin-bottom: 20px !important;
     }
     button[data-baseweb="tab"] {
         background-color: transparent !important;
         color: #a0aec0 !important;
         border: none !important;
         border-radius: 8px !important;
-        padding: 10px 24px !important;
+        padding: 10px 22px !important;
         font-weight: 600 !important;
         font-family: 'Outfit', sans-serif !important;
+        font-size: 0.85rem !important;
         transition: all 0.2s ease-in-out !important;
     }
+    button[data-baseweb="tab"]:hover {
+        background: rgba(99, 102, 241, 0.07) !important;
+        color: #c7d2fe !important;
+    }
     button[data-baseweb="tab"][aria-selected="true"] {
-        background: rgba(99, 102, 241, 0.12) !important;
-        color: #6366f1 !important;
+        background: rgba(99, 102, 241, 0.14) !important;
+        color: #818cf8 !important;
         border: 1px solid rgba(99, 102, 241, 0.3) !important;
     }
-    .todo-completed {
-        color: #10B981 !important;
-        font-weight: 600;
+    /* ── Metrics ── */
+    [data-testid="stMetric"] {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 10px;
+        padding: 14px 16px !important;
     }
-    .todo-inprogress {
-        color: #60EFFF !important;
-        font-style: italic;
+    [data-testid="stMetricLabel"] {
+        color: #94a3b8 !important;
+        font-size: 0.75rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
     }
-    .todo-pending {
-        color: #a0aec0 !important;
+    [data-testid="stMetricValue"] {
+        font-family: 'Outfit', sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 1.5rem !important;
+        color: #e2e8f0 !important;
     }
+    /* ── Misc helpers ── */
+    .todo-completed { color: #10B981 !important; font-weight: 600; }
+    .todo-inprogress { color: #60EFFF !important; font-style: italic; }
+    .todo-pending { color: #a0aec0 !important; }
     .dark-teal-highlight {
         background: rgba(13, 148, 136, 0.1);
         border-left: 4px solid #0d9488;
@@ -393,9 +463,30 @@ render_sidebar_todo(st.session_state["harness_todo"])
 
 # ── Main UI Layout ──
 
+# Active context pills
+_active_repo_name = st.session_state.get("repo_name", "")
+_active_pdf_count = len(st.session_state.get("unstructured_docs", []))
+_pills_html = ""
+if _active_repo_name:
+    _pills_html += f'<span class="pill">Codebase: {_active_repo_name}</span>'
+if _active_pdf_count > 0:
+    _pills_html += f'<span class="pill teal">{_active_pdf_count} PDF(s) Indexed</span>'
 
+st.markdown(
+    f"""
+    <div class="app-header">
+      <div class="app-header-logo">&#128302;</div>
+      <div class="app-header-text">
+        <h1>Context Optimization Engine</h1>
+        <p>Agentic Graph-Augmented Retrieval &amp; Multi-Turn QA Harness</p>
+      </div>
+      <div class="app-status-pill">{_pills_html}</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-main_tabs = st.tabs(["📤 Ingest & Index Graphs", "🌐 Visualizer Dashboard", "💬 Master Loop QA", "📊 Token Analytics"])
+main_tabs = st.tabs(["Ingest & Index Graphs", "Visualizer Dashboard", "Master Loop QA", "Token Analytics"])
 
 # --- Tab 0: Ingest & Index Graphs ---
 with main_tabs[0]:
@@ -420,10 +511,14 @@ with main_tabs[0]:
                     if zip_files:
                         repo_meta = ingest_uploaded_zip(zip_files[0])
                         st.session_state.repo_id = repo_meta.repo_id
+                        st.session_state["repo_name"] = repo_meta.name
+                        st.session_state["uploaded_codebase"] = True
                         st.success(f"Successfully built CodeGraph for repository: {repo_meta.name}")
                     else:
                         repo_meta = ingest_uploaded_files(repo_upload)
                         st.session_state.repo_id = repo_meta.repo_id
+                        st.session_state["repo_name"] = repo_meta.name
+                        st.session_state["uploaded_codebase"] = True
                         st.success(f"Successfully built CodeGraph for {len(repo_upload)} uploaded files.")
                     
                     st.metric("Total Python Files", repo_meta.stats.python_files)
@@ -449,6 +544,7 @@ with main_tabs[0]:
                     if not any(cd["name"] == d["name"] for cd in current_docs):
                         current_docs.append(d)
                 st.session_state["unstructured_docs"] = current_docs
+                st.session_state["uploaded_pdf"] = True
                 st.success(f"Ingested {len(docs)} document(s).")
                 
         # Action Buttons for LangGraph
@@ -978,7 +1074,7 @@ with main_tabs[3]:
     num_chats = len(chat_details)
     
     if num_chats == 0:
-        cum_baseline = asset_baseline_single if asset_baseline_single > 0 else 1000
+        cum_baseline = asset_baseline_single  # 0 if nothing uploaded yet
         cum_optimized = overhead_tokens
         cum_savings_pct = 0.0
     else:
