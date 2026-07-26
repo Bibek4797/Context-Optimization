@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
 from app.core.dependencies import chat_service, repo_service, storage
 from app.models.schemas import (
@@ -26,6 +26,19 @@ async def upload_repo(file: UploadFile = File(...)) -> RepoMetadata:
         raise HTTPException(status_code=400, detail="Upload must be a .zip file.")
     try:
         return await repo_service.ingest_zip_upload(file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - defensive API boundary
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/repo/upload-files", response_model=RepoMetadata)
+async def upload_repo_files(
+    files: list[UploadFile] = File(...),
+    paths: list[str] = Form(default_factory=list),
+) -> RepoMetadata:
+    try:
+        return await repo_service.ingest_file_uploads(files, paths)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - defensive API boundary
@@ -119,4 +132,3 @@ def query_details(query_id: str) -> QueryRecord:
     if record is None:
         raise HTTPException(status_code=404, detail="Query not found.")
     return record
-

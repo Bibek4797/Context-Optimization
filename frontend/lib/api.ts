@@ -30,10 +30,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  uploadRepo(file: File) {
+  uploadRepo(files: File[]) {
+    if (files.length === 0) {
+      throw new Error("Choose a zip file, source files, or a folder to upload.");
+    }
     const form = new FormData();
-    form.append("file", file);
-    return request<RepoMetadata>("/repo/upload", { method: "POST", body: form });
+    if (files.length === 1 && files[0].name.toLowerCase().endsWith(".zip")) {
+      form.append("file", files[0]);
+      return request<RepoMetadata>("/repo/upload", { method: "POST", body: form });
+    }
+    files.forEach((file) => {
+      const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+      form.append("files", file, relativePath);
+      form.append("paths", relativePath);
+    });
+    return request<RepoMetadata>("/repo/upload-files", { method: "POST", body: form });
   },
   importGithub(url: string) {
     return request<RepoMetadata>("/repo/import-github", { method: "POST", body: JSON.stringify({ url }) });
@@ -78,4 +89,3 @@ export const api = {
     });
   },
 };
-

@@ -6,6 +6,8 @@ import {
   Bot,
   Boxes,
   Code2,
+  FileArchive,
+  FolderUp,
   GitBranch,
   GitCompare,
   Github,
@@ -107,12 +109,13 @@ export default function Home() {
     setActiveTab(nextTab);
   }
 
-  async function handleUpload(file: File | null) {
-    if (!file) return;
+  async function handleUpload(fileList: FileList | File[] | null) {
+    const uploadFiles = Array.from(fileList ?? []);
+    if (!uploadFiles.length) return;
     setBusy(true);
     setMessage("Uploading and analyzing repository...");
     try {
-      const metadata = await api.uploadRepo(file);
+      const metadata = await api.uploadRepo(uploadFiles);
       await hydrateRepo(metadata.repo_id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Upload failed.");
@@ -349,19 +352,70 @@ function UploadImportPanel({
 }: {
   githubUrl: string;
   setGithubUrl: (value: string) => void;
-  onUpload: (file: File | null) => void;
+  onUpload: (files: FileList | File[] | null) => void;
   onImport: () => void;
   busy: boolean;
 }) {
+  const codebaseAccept = [
+    ".zip",
+    ".py",
+    ".pyi",
+    ".ipynb",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".h",
+    ".hpp",
+  ].join(",");
+
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <Panel title="Upload Zip">
-        <label className="flex min-h-52 cursor-pointer flex-col items-center justify-center border border-dashed border-line bg-white p-8 text-center hover:bg-panel">
+      <Panel title="Upload Codebase">
+        <div className="flex min-h-52 flex-col items-center justify-center gap-4 border border-dashed border-line bg-white p-8 text-center">
           <Upload size={28} className="mb-3 text-accent" />
-          <span className="font-medium">Choose zipped Python repo</span>
-          <span className="mt-1 text-sm text-zinc-500">Ignored folders are skipped during extraction.</span>
-          <input type="file" accept=".zip" className="hidden" onChange={(event) => onUpload(event.target.files?.[0] ?? null)} disabled={busy} />
-        </label>
+          <div>
+            <span className="font-medium">Choose a zip, source files, or a folder</span>
+            <span className="mt-1 block text-sm text-zinc-500">Ignored folders are skipped during ingestion.</span>
+          </div>
+          <div className="flex flex-wrap justify-center gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-2 border border-accent bg-accent px-4 py-2 text-sm text-white hover:bg-[#0d7f73]">
+              <FileArchive size={16} /> Zip / files
+              <input
+                type="file"
+                accept={codebaseAccept}
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  onUpload(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+                disabled={busy}
+              />
+            </label>
+            <label className="inline-flex cursor-pointer items-center gap-2 border border-line px-4 py-2 text-sm hover:bg-panel">
+              <FolderUp size={16} /> Folder
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  onUpload(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+                disabled={busy}
+                {...{ webkitdirectory: "", directory: "" }}
+              />
+            </label>
+          </div>
+        </div>
       </Panel>
 
       <Panel title="Import GitHub">
