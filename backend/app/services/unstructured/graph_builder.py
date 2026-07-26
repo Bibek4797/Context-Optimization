@@ -69,6 +69,26 @@ Return ONLY valid JSON. Do not include any other conversational text.
     except Exception as e:
         raise RuntimeError(f"API failure during entity extraction: {e}")
 
+try:
+    from thefuzz import fuzz
+except ImportError:
+    fuzz = None
+
+def find_fuzzy_canonical_node(G: nx.Graph, node_id: str, threshold: int = 90) -> str:
+    """Finds an existing node in G that fuzzy-matches node_id to merge duplicates (e.g. 'andrew_ng' vs 'prof_andrew_ng')."""
+    if G.has_node(node_id):
+        return node_id
+    if fuzz is None or len(node_id) < 4:
+        return node_id
+    node_str = node_id.replace("_", " ")
+    for existing_node in list(G.nodes):
+        if len(existing_node) >= 4:
+            existing_str = existing_node.replace("_", " ")
+            score = fuzz.token_set_ratio(node_str, existing_str)
+            if score >= threshold:
+                return existing_node
+    return node_id
+
 def build_graph_from_documents(documents: list[dict]) -> nx.Graph:
     G = nx.Graph()
     
@@ -115,11 +135,15 @@ def build_graph_from_documents(documents: list[dict]) -> nx.Graph:
             doc_nodes.extend(data.get("nodes", []))
             doc_edges.extend(data.get("edges", []))
             
-        # Process nodes
+        # Process nodes (with fuzzy deduplication)
         for node_data in doc_nodes:
-            node_id = str(node_data.get("id")).strip().lower().replace(" ", "_")
-            if not node_id:
+            raw_id = str(node_data.get("id")).strip().lower().replace(" ", "_")
+            if not raw_id:
                 continue
+            
+            # Resolve canonical ID via fuzzy matching if an equivalent node exists
+            node_id = find_fuzzy_canonical_node(G, raw_id, threshold=90)
+            
             label = node_data.get("label", node_id)
             ntype = node_data.get("type", "General")
             desc = node_data.get("description", "")
@@ -138,13 +162,19 @@ def build_graph_from_documents(documents: list[dict]) -> nx.Graph:
                     doc_ids={doc["id"]}
                 )
         
-        # Process edges
+        # Process edges (resolving canonical fuzzy node IDs for source and target)
         for edge_data in doc_edges:
-            src = str(edge_data.get("source_id")).strip().lower().replace(" ", "_")
-            tgt = str(edge_data.get("target_id")).strip().lower().replace(" ", "_")
+            raw_src = str(edge_data.get("source_id")).strip().lower().replace(" ", "_")
+            raw_tgt = str(edge_data.get("target_id")).strip().lower().replace(" ", "_")
             rel = edge_data.get("relation_type", "associated_with")
             
-            if not src or not tgt or src == tgt:
+            if not raw_src or not raw_tgt or raw_src == raw_tgt:
+                continue
+                
+            src = find_fuzzy_canonical_node(G, raw_src, threshold=90)
+            tgt = find_fuzzy_canonical_node(G, raw_tgt, threshold=90)
+            
+            if src == tgt:
                 continue
             
             if not G.has_node(src):
