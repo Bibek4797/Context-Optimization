@@ -546,6 +546,41 @@ class AgentHarness:
                 f"Try narrowing your question or uploading the required assets."
             )
 
+        # Safeguard: if Rectify Mode is enabled and a tool returned a code fix in history,
+        # but the planner failed to include it in final_answer, we auto-append it!
+        if st.session_state.get("harness_rectify_mode", False) and final_answer:
+            tool_fixes = []
+            for step in history:
+                obs = step.get("observation", "")
+                if "<code_fix>" in obs:
+                    normalized = obs.replace("\\\\n", "\n").replace("\\n", "\n")
+                    pattern = re.compile(
+                        r"<code_fix>[\s\n\r]*"
+                        r"<filepath>(?P<filepath>.*?)</filepath>[\s\n\r]*"
+                        r"<original_code>(?P<original>.*?)</original_code>[\s\n\r]*"
+                        r"<replacement_code>(?P<replacement>.*?)</replacement_code>[\s\n\r]*"
+                        r"</code_fix>",
+                        re.IGNORECASE | re.DOTALL,
+                    )
+                    for m in pattern.finditer(normalized):
+                        tool_fixes.append({
+                            "filepath": m.group("filepath").strip(),
+                            "original": m.group("original").strip(),
+                            "replacement": m.group("replacement").strip(),
+                        })
+            
+            if tool_fixes and "<code_fix>" not in final_answer.lower():
+                append_blocks = []
+                for fix in tool_fixes:
+                    append_blocks.append(
+                        f"\n\n<code_fix>\n"
+                        f"  <filepath>{fix['filepath']}</filepath>\n"
+                        f"  <original_code>\n{fix['original']}\n  </original_code>\n"
+                        f"  <replacement_code>\n{fix['replacement']}\n  </replacement_code>\n"
+                        f"</code_fix>"
+                    )
+                final_answer += "".join(append_blocks)
+
         return {
             "query": user_query,
             "final_answer": final_answer,
