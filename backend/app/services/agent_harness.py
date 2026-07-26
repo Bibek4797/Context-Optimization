@@ -108,7 +108,7 @@ class AgentHarness:
                 for n in (record.selected_nodes or [])
             ]
             edges_info = [
-                {"edge_id": e.edge_id, "type": e.edge_type,
+                {"edge_id": getattr(e, "edge_id", None) or f"{e.source_node}->{e.target_node}", "type": e.edge_type,
                  "src": e.source_node, "tgt": e.target_node}
                 for e in (record.selected_edges or [])
             ]

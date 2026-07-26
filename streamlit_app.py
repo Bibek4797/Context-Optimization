@@ -530,7 +530,7 @@ if "unstructured_node_embeddings" not in st.session_state:
     st.session_state["unstructured_node_embeddings"] = {}
 
 # Auto-restore active repository if stored on disk and not yet in session state
-all_saved_repos = storage.list_repos()
+all_saved_repos = storage.list_repos() if hasattr(storage, "list_repos") else []
 if not st.session_state.get("repo_id") and all_saved_repos:
     latest_repo = all_saved_repos[0]
     st.session_state["repo_id"] = latest_repo.repo_id
@@ -632,7 +632,7 @@ with main_tabs[0]:
                     st.error(f"Ingestion failed: {e}")
                     
         # Check active & stored repositories
-        all_repos = storage.list_repos()
+        all_repos = storage.list_repos() if hasattr(storage, "list_repos") else []
         if all_repos:
             repo_options = {f"{r.name} ({r.stats.total_files} files)": r.repo_id for r in all_repos}
             current_id = st.session_state.get("repo_id", all_repos[0].repo_id)

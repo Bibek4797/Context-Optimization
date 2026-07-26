@@ -90,6 +90,7 @@ class GraphNode(BaseModel):
 
 
 class GraphEdge(BaseModel):
+    edge_id: str | None = None
     source_node: str
     target_node: str
     edge_type: str
