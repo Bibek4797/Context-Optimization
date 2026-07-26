@@ -760,11 +760,29 @@ class GraphRetrievalService:
             raw_bm25 = bm25_scores.get(nid, 0.0)
             node_scores[nid] = (w_bm25 * raw_bm25) + (w_pr * pr_scores.get(nid, 0.0))
 
-        # Sort and select top anchor nodes
+        # Sort and select top anchor nodes with Term-Balanced Multi-Anchor Selection
         anchors_list = sorted(all_nodes, key=lambda n: node_scores.get(n.node_id, 0.0), reverse=True)
         selected_anchors = {}
-        for node in anchors_list[:actual_max_anchors]:
-            selected_anchors[node.node_id] = node
+        
+        # Ensure at least 1 top anchor per distinct query term is selected for cross-component queries
+        if len(query_terms) > 1:
+            for term in query_terms:
+                term_matches = [
+                    node for node in anchors_list 
+                    if term in node.label.lower() or term in (node.file_path or "").lower()
+                ]
+                if term_matches:
+                    best_match = term_matches[0]
+                    selected_anchors[best_match.node_id] = best_match
+                    if len(selected_anchors) >= actual_max_anchors:
+                        break
+                        
+        # Fill remaining anchor slots from global score ranking
+        for node in anchors_list:
+            if len(selected_anchors) >= actual_max_anchors:
+                break
+            if node.node_id not in selected_anchors:
+                selected_anchors[node.node_id] = node
 
         # 5. Graph Neighborhood Expansion (EdgeRank)
         # Select neighboring nodes directly connected to selected anchors
