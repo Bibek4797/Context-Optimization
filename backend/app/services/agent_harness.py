@@ -296,7 +296,7 @@ Perform the traversal, trace relationships, and summarize the findings. Return O
 
     # --- Master Loop ---
 
-    def execute(self, user_query: str, max_iterations: int = 6, callback: Any = None) -> dict[str, Any]:
+    def execute(self, user_query: str, max_iterations: int = 6, source_preference: str = "auto", callback: Any = None) -> dict[str, Any]:
         """Execute the perception-action-observation loop to answer the user query."""
         history = []
         final_answer = None

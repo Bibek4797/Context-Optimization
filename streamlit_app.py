@@ -168,6 +168,12 @@ st.markdown(
     .todo-pending {
         color: #a0aec0 !important;
     }
+    .dark-teal-highlight {
+        background: rgba(13, 148, 136, 0.1);
+        border-left: 4px solid #0d9488;
+        padding: 10px;
+        color: #5eead4;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -387,7 +393,7 @@ render_sidebar_todo(st.session_state["harness_todo"])
 
 # ── Main UI Layout ──
 
-st.markdown('<h1 class="title-gradient">🕸️ Graph-Based Context Optimization for LLMs</h1>', unsafe_allow_html=True)
+
 
 main_tabs = st.tabs(["📤 Ingest & Index Graphs", "🌐 Visualizer Dashboard", "💬 Master Loop QA", "📊 Token Analytics"])
 
@@ -797,57 +803,7 @@ with main_tabs[2]:
                                     help="Apply the fix first to enable download."
                                 )
 
-            # ── Per-Message Retrieval Inspector & Derived Context Details ──
-            retrieval_recs = msg.get("retrieval_records", [])
-            if retrieval_recs:
-                with st.expander("🔍 Show Retrieval Inspector & Unified Derived Context", expanded=False):
-                    # Aggregate & Deduplicate Nodes
-                    seen_node_ids = set()
-                    unique_nodes = []
-                    all_context_blocks = []
-                    sys_names = set()
-                    
-                    for rec in retrieval_recs:
-                        stype = rec.get("type", "Graph")
-                        sys_names.add(stype)
-                        
-                        for n in rec.get("selected_nodes", []):
-                            nid = n.get("node_id") if isinstance(n, dict) else getattr(n, "node_id", str(n))
-                            if nid and nid not in seen_node_ids:
-                                seen_node_ids.add(nid)
-                                unique_nodes.append(n)
-                                
-                        ctx = rec.get("context_retrieved") or rec.get("merged_context_prompt") or rec.get("context") or ""
-                        if ctx and ctx not in all_context_blocks:
-                            all_context_blocks.append(ctx)
 
-                    # Deduplicate context lines
-                    unified_context = "\n\n".join(all_context_blocks)
-                    if not unified_context.strip():
-                        unified_context = "No explicit context retrieved."
-                        
-                    st.markdown(f"**Retrieval Systems Executed**: `{', '.join(sys_names)}` (Total Calls: {len(retrieval_recs)})")
-                    
-                    if unique_nodes:
-                        st.markdown("##### 🌲 Derived Unique Subgraph Nodes:")
-                        for n in unique_nodes:
-                            nid = n.get("node_id") if isinstance(n, dict) else getattr(n, "node_id", str(n))
-                            ntype = n.get("type") if isinstance(n, dict) else getattr(n, "node_type", "node")
-                            lbl = n.get("label") if isinstance(n, dict) else getattr(n, "label", nid)
-                            fpath = n.get("file_path") if isinstance(n, dict) else getattr(n, "file_path", "")
-                            lstart = n.get("line_start") if isinstance(n, dict) else getattr(n, "line_start", "-")
-                            st.write(f"- `{nid}` [{ntype}] `{lbl}` ({fpath}:{lstart})")
-                            
-                    st.markdown("##### 📝 Unified Derived Context Sent to LLM:")
-                    st.code(unified_context, language="markdown")
-
-            if "harness_history" in msg and msg["harness_history"]:
-                with st.expander("🛠️ Show Master Loop Perception-Action Observations", expanded=False):
-                    for idx, step in enumerate(msg["harness_history"]):
-                        st.markdown(f"#### 🔄 Iteration {idx+1}")
-                        st.write(f"**Thought:** {step.get('thought')}")
-                        st.write(f"**Action:** Call `{step.get('tool')}` with `{step.get('tool_input')}`")
-                        st.code(step.get('observation'), language="text")
 
     # Chat Input
     if user_query := st.chat_input("Ask a question mapping codebase dependencies and unstructured rules..."):
@@ -876,7 +832,12 @@ with main_tabs[2]:
         with st.spinner("Initializing central agentic harness loop..."):
             harness = AgentHarness(chat_service=chat_service, llm_provider=active_llm)
             try:
-                result = harness.execute(user_query, max_iterations=16, callback=update_ui)
+                # Determine max iterations based on uploaded assets
+                has_pdf = "uploaded_pdf" in st.session_state
+                has_code = "uploaded_codebase" in st.session_state
+                max_iters = 6 if has_pdf and has_code else 4
+                pref = st.session_state.get("source_preference", "auto").replace(" ", "_")
+                result = harness.execute(user_query, max_iterations=max_iters, source_preference=pref, callback=update_ui)
                 final_answer = result["final_answer"]
                 history_log = result["history"]
             except Exception as e:
