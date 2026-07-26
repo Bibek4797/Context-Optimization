@@ -296,16 +296,23 @@ Perform the traversal, trace relationships, and summarize the findings. Return O
 
     # --- Master Loop ---
 
-    def execute(self, user_query: str, max_iterations: int = 16, callback: Callable[[List[Dict[str, str]], List[Dict[str, Any]]], None] | None = None) -> Dict[str, Any]:
-        """Runs the perception-action-observation master loop."""
-        history: List[Dict[str, str]] = []
-        iteration = 0
+    def execute(self, user_query: str, max_iterations: int = 6, callback: Any = None) -> dict[str, Any]:
+        """Execute the perception-action-observation loop to answer the user query."""
+        history = []
         final_answer = None
         consecutive_errors = 0
         
-        # Reset plan in state
-        st.session_state["harness_todo"] = []
-        
+        # Reset harness checklist
+        st.session_state["harness_todo"] = [
+            {"task": f"Deconstruct user query: '{user_query[:40]}...'", "status": "in_progress"},
+            {"task": "Select graph system (CodeGraph / Graphify / LangGraph)", "status": "pending"},
+            {"task": "Extract targeted subgraph snippets", "status": "pending"},
+            {"task": "Synthesize clean final answer", "status": "pending"}
+        ]
+        if callback:
+            callback(history, st.session_state["harness_todo"])
+
+        iteration = 0
         while iteration < max_iterations:
             iteration += 1
             

@@ -800,62 +800,46 @@ with main_tabs[2]:
             # ── Per-Message Retrieval Inspector & Derived Context Details ──
             retrieval_recs = msg.get("retrieval_records", [])
             if retrieval_recs:
-                with st.expander("🔍 Show Retrieval Inspector & Derived Context Details", expanded=False):
-                    for rec_idx, rec in enumerate(retrieval_recs):
-                        st.markdown(f"#### 🌐 Harness Execution Call #{len(retrieval_recs) - rec_idx}: `{rec.get('type', 'Graph')}`")
+                with st.expander("🔍 Show Retrieval Inspector & Unified Derived Context", expanded=False):
+                    # Aggregate & Deduplicate Nodes
+                    seen_node_ids = set()
+                    unique_nodes = []
+                    all_context_blocks = []
+                    sys_names = set()
+                    
+                    for rec in retrieval_recs:
+                        stype = rec.get("type", "Graph")
+                        sys_names.add(stype)
                         
-                        # System Badges
-                        st.markdown(
-                            f"• **Source System**: `{rec.get('source_system', 'N/A')}`  \n"
-                            f"• **Retrieval Engine**: `{rec.get('retrieval_method', 'N/A')}`  \n"
-                            f"• **Strategy**: `{rec.get('retrieval_strategy', 'N/A')}`"
-                        )
-                        
-                        # Parameters if available
-                        params_list = []
-                        if rec.get("max_nodes"):
-                            params_list.append(f"Max Nodes: **{rec['max_nodes']}**")
-                        if rec.get("max_neighbors"):
-                            params_list.append(f"AST Hops: **{rec['max_neighbors']}**")
-                        if rec.get("graphify_mode"):
-                            params_list.append(f"Traversal: **{rec['graphify_mode'].upper()}**")
-                        if rec.get("rectify_mode"):
-                            params_list.append("Rectify Mode: **ON**")
-                        if params_list:
-                            st.caption(" | ".join(params_list))
-                            
-                        # Derived Context / Subgraph Content
-                        full_context = (
-                            rec.get("context_retrieved") or 
-                            rec.get("merged_context_prompt") or 
-                            rec.get("context") or 
-                            "No explicit context retrieved."
-                        )
+                        for n in rec.get("selected_nodes", []):
+                            nid = n.get("node_id") if isinstance(n, dict) else getattr(n, "node_id", str(n))
+                            if nid and nid not in seen_node_ids:
+                                seen_node_ids.add(nid)
+                                unique_nodes.append(n)
+                                
+                        ctx = rec.get("context_retrieved") or rec.get("merged_context_prompt") or rec.get("context") or ""
+                        if ctx and ctx not in all_context_blocks:
+                            all_context_blocks.append(ctx)
 
-                        if rec.get("source_system") == "langgraph" or "LangGraph" in rec.get("type", ""):
-                            st.markdown("##### 🧩 Derived Louvain Communities & Summaries")
-                            per_comm = rec.get("per_comm_details", [])
-                            if per_comm:
-                                for item in per_comm:
-                                    st.info(
-                                        f"**Community {item.get('cid')}** (Relevance Score: {item.get('score', 0.0):.3f})\n\n"
-                                        f"**Summary**: {item.get('summary', '')}\n\n"
-                                        f"**Intermediate Answer**: {item.get('partial_answer', '')}"
-                                    )
-                            st.markdown("##### 📝 Merged Prompt Context Sent to LLM")
-                            st.code(full_context, language="markdown")
-                        else:
-                            st.markdown("##### 🌲 Derived AST Codebase Subgraph")
-                            nodes = rec.get("selected_nodes", [])
-                            if nodes:
-                                st.markdown("**Selected Graph Nodes:**")
-                                for n in nodes:
-                                    st.write(f"- `{n.get('node_id')}` [{n.get('type')}] `{n.get('label')}` ({n.get('file_path')}:{n.get('line_start')})")
-                            st.markdown("##### 📝 Source Snippets & Exact Context Sent to LLM:")
-                            st.code(full_context, language="markdown")
+                    # Deduplicate context lines
+                    unified_context = "\n\n".join(all_context_blocks)
+                    if not unified_context.strip():
+                        unified_context = "No explicit context retrieved."
+                        
+                    st.markdown(f"**Retrieval Systems Executed**: `{', '.join(sys_names)}` (Total Calls: {len(retrieval_recs)})")
+                    
+                    if unique_nodes:
+                        st.markdown("##### 🌲 Derived Unique Subgraph Nodes:")
+                        for n in unique_nodes:
+                            nid = n.get("node_id") if isinstance(n, dict) else getattr(n, "node_id", str(n))
+                            ntype = n.get("type") if isinstance(n, dict) else getattr(n, "node_type", "node")
+                            lbl = n.get("label") if isinstance(n, dict) else getattr(n, "label", nid)
+                            fpath = n.get("file_path") if isinstance(n, dict) else getattr(n, "file_path", "")
+                            lstart = n.get("line_start") if isinstance(n, dict) else getattr(n, "line_start", "-")
+                            st.write(f"- `{nid}` [{ntype}] `{lbl}` ({fpath}:{lstart})")
                             
-                        if rec_idx < len(retrieval_recs) - 1:
-                            st.markdown("---")
+                    st.markdown("##### 📝 Unified Derived Context Sent to LLM:")
+                    st.code(unified_context, language="markdown")
 
             if "harness_history" in msg and msg["harness_history"]:
                 with st.expander("🛠️ Show Master Loop Perception-Action Observations", expanded=False):
@@ -954,8 +938,15 @@ with main_tabs[3]:
             r_tokens = token_service.estimate_tokens(a_answer)
 
             recs = a_msg.get("retrieval_records", [])
-            c_tokens = sum(r.get("context_tokens", 0) for r in recs)
-            
+            c_tokens = 0
+            for r in recs:
+                t_cnt = r.get("context_tokens", 0)
+                if t_cnt == 0:
+                    ctx_str = r.get("context_retrieved") or r.get("merged_context_prompt") or r.get("context") or ""
+                    if ctx_str:
+                        t_cnt = token_service.estimate_tokens(ctx_str)
+                c_tokens += t_cnt
+                
             # Extract unique systems used
             sys_set = set()
             for r in recs:
