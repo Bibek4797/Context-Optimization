@@ -197,13 +197,38 @@ class RectificationService:
                 content_lines = content.splitlines()
                 
                 match_idx = -1
-                # Basic rolling window search for the block
+                target_lines_len = len(target_lines)
+                
+                # Rolling window search for the block
                 for i in range(len(content_lines) - len(target_lines) + 1):
                     window = [content_lines[i + j].strip() for j in range(len(target_lines))]
                     if window == target_lines:
                         match_idx = i
                         break
                         
+                # Layer E: Fuzzy Sequence Matching (if exact line matching fails)
+                if match_idx == -1 and target_lines:
+                    import difflib
+                    best_score = 0.0
+                    best_idx = -1
+                    best_len = len(target_lines)
+                    
+                    # Try sliding windows of size len(target_lines) +/- 2
+                    for window_len in range(max(1, len(target_lines) - 2), len(target_lines) + 3):
+                        if window_len > len(content_lines):
+                            continue
+                        for i in range(len(content_lines) - window_len + 1):
+                            window_str = "\n".join(content_lines[i : i + window_len])
+                            score = difflib.SequenceMatcher(None, target_str, window_str).ratio()
+                            if score > best_score and score >= 0.65:
+                                best_score = score
+                                best_idx = i
+                                best_len = window_len
+                                
+                    if best_idx != -1:
+                        match_idx = best_idx
+                        target_lines_len = best_len
+
                 if match_idx != -1:
                     # Find base indentation of first line in file matched block
                     file_first_line = content_lines[match_idx]
@@ -219,7 +244,7 @@ class RectificationService:
                     
                     # Reconstruct the file with the replacement
                     before = "\n".join(content_lines[:match_idx])
-                    after = "\n".join(content_lines[match_idx + len(target_lines):])
+                    after = "\n".join(content_lines[match_idx + target_lines_len:])
                     new_content = (before + "\n" if before else "") + adjusted_replacement + ("\n" + after if after else "")
             
             if new_content is None:

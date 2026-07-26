@@ -825,6 +825,13 @@ with main_tabs[2]:
                             st.caption(" | ".join(params_list))
                             
                         # Derived Context / Subgraph Content
+                        full_context = (
+                            rec.get("context_retrieved") or 
+                            rec.get("merged_context_prompt") or 
+                            rec.get("context") or 
+                            "No explicit context retrieved."
+                        )
+
                         if rec.get("source_system") == "langgraph" or "LangGraph" in rec.get("type", ""):
                             st.markdown("##### 🧩 Derived Louvain Communities & Summaries")
                             per_comm = rec.get("per_comm_details", [])
@@ -835,8 +842,8 @@ with main_tabs[2]:
                                         f"**Summary**: {item.get('summary', '')}\n\n"
                                         f"**Intermediate Answer**: {item.get('partial_answer', '')}"
                                     )
-                            st.markdown("##### 📝 Merged Prompt Context")
-                            st.code(rec.get("merged_context_prompt", ""), language="text")
+                            st.markdown("##### 📝 Merged Prompt Context Sent to LLM")
+                            st.code(full_context, language="markdown")
                         else:
                             st.markdown("##### 🌲 Derived AST Codebase Subgraph")
                             nodes = rec.get("selected_nodes", [])
@@ -844,8 +851,8 @@ with main_tabs[2]:
                                 st.markdown("**Selected Graph Nodes:**")
                                 for n in nodes:
                                     st.write(f"- `{n.get('node_id')}` [{n.get('type')}] `{n.get('label')}` ({n.get('file_path')}:{n.get('line_start')})")
-                            st.markdown("**Source Snippets & Context Derived:**")
-                            st.code(rec.get("context_retrieved", "No explicit context retrieved."), language="python")
+                            st.markdown("##### 📝 Source Snippets & Exact Context Sent to LLM:")
+                            st.code(full_context, language="markdown")
                             
                         if rec_idx < len(retrieval_recs) - 1:
                             st.markdown("---")
