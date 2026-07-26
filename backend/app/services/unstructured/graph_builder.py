@@ -81,16 +81,26 @@ def build_graph_from_documents(documents: list[dict]) -> nx.Graph:
         file_len = len(text)
         chunk_size = min(15000, max(1000, file_len // 7))
         overlap = chunk_size // 10
-        step_size = chunk_size - overlap
         
         chunks = []
         start = 0
         while start < len(text):
-            end = start + chunk_size
+            end = min(len(text), start + chunk_size)
+            if end < len(text):
+                # Search backward for natural word boundary (space or sentence end) to avoid slicing words in half
+                space_idx = text.rfind(" ", start + (chunk_size // 2), end)
+                if space_idx != -1:
+                    end = space_idx
+                    
             chunks.append(text[start:end])
-            start += step_size
-            if start >= len(text) or len(text) <= chunk_size:
+            
+            if end >= len(text):
                 break
+                
+            next_start = end - overlap
+            if next_start <= start:
+                next_start = start + 1
+            start = next_start
                 
         total_chunks = len(chunks)
         
