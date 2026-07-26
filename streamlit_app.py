@@ -328,15 +328,12 @@ st.sidebar.title("⚙️ Engine Configuration")
 
 provider = st.sidebar.selectbox(
     "LLM Provider",
-    ["Gemini", "Groq", "OpenRouter", "Bedrock"],
+    ["Gemini", "Groq", "OpenRouter"],
     key="llm_provider_select"
 )
 
 # API key / Credential inputs
 api_key = ""
-aws_access_key = ""
-aws_secret_key = ""
-aws_region = "us-east-1"
 model = ""
 
 # Handle provider default models
@@ -346,50 +343,22 @@ elif provider == "Groq":
     model = st.sidebar.selectbox("Groq Model", ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"])
 elif provider == "OpenRouter":
     model = st.sidebar.selectbox("OpenRouter Model", ["meta-llama/llama-3.3-70b-instruct:free"])
-elif provider == "Bedrock":
-    model = st.sidebar.selectbox("Bedrock Model", ["anthropic.claude-3-5-sonnet-20241022-v2:0", "amazon.nova-lite-v1:0"])
 
-if provider != "Bedrock":
-    default_key = ""
-    session_key_name = f"{provider.lower()}_api_key_override"
-    if session_key_name not in st.session_state:
-        st.session_state[session_key_name] = default_key
-        
-    api_key = st.sidebar.text_input(
-        f"{provider} API Key",
-        value=st.session_state[session_key_name],
-        type="password",
-        key=f"api_key_input_{provider.lower()}"
-    )
-    st.session_state[session_key_name] = api_key
-    st.session_state["api_key"] = api_key
-    st.session_state["llm_provider"] = "Gemini" if provider == "Gemini" else f"{provider} ({model})"
-    st.session_state["model_name"] = model
-else:
-    default_access = ""
-    default_secret = ""
-    default_region = "us-east-1"
+default_key = os.environ.get(f"{provider.upper()}_API_KEY", "")
+session_key_name = f"{provider.lower()}_api_key_override"
+if session_key_name not in st.session_state or not st.session_state[session_key_name]:
+    st.session_state[session_key_name] = default_key
     
-    if "bedrock_access_key_override" not in st.session_state:
-        st.session_state["bedrock_access_key_override"] = default_access
-    if "bedrock_secret_key_override" not in st.session_state:
-        st.session_state["bedrock_secret_key_override"] = default_secret
-    if "bedrock_region_override" not in st.session_state:
-        st.session_state["bedrock_region_override"] = default_region
-        
-    aws_access_key = st.sidebar.text_input("AWS Access Key ID", value=st.session_state["bedrock_access_key_override"], type="password")
-    aws_secret_key = st.sidebar.text_input("AWS Secret Access Key", value=st.session_state["bedrock_secret_key_override"], type="password")
-    aws_region = st.sidebar.text_input("AWS Region", value=st.session_state["bedrock_region_override"])
-    
-    st.session_state["bedrock_access_key_override"] = aws_access_key
-    st.session_state["bedrock_secret_key_override"] = aws_secret_key
-    st.session_state["bedrock_region_override"] = aws_region
-    
-    st.session_state["aws_access_key"] = aws_access_key
-    st.session_state["aws_secret_key"] = aws_secret_key
-    st.session_state["aws_region"] = aws_region
-    st.session_state["llm_provider"] = "Amazon Bedrock"
-    st.session_state["model_name"] = model
+api_key = st.sidebar.text_input(
+    f"{provider} API Key",
+    value=st.session_state[session_key_name],
+    type="password",
+    key=f"api_key_input_{provider.lower()}"
+)
+st.session_state[session_key_name] = api_key
+st.session_state["api_key"] = api_key
+st.session_state["llm_provider"] = "Gemini" if provider == "Gemini" else f"{provider} ({model})"
+st.session_state["model_name"] = model
 
 # Instantiate dynamic LLM Provider matching sidebar configuration
 def get_configured_llm_provider():
@@ -399,13 +368,6 @@ def get_configured_llm_provider():
         return GroqProvider(api_key=api_key, model=model)
     elif provider == "OpenRouter":
         return OpenRouterProvider(api_key=api_key, model=model)
-    elif provider == "Bedrock":
-        return BedrockProvider(
-            aws_access_key_id=aws_access_key,
-            aws_secret_access_key=aws_secret_key,
-            aws_region=aws_region,
-            model=model
-        )
     return base_llm_provider
 
 # Update chat_service's llm provider dynamically

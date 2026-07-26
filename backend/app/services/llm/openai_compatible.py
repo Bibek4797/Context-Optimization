@@ -104,7 +104,8 @@ class GroqProvider(LLMProvider):
 
 class OpenRouterProvider(LLMProvider):
     def __init__(self, api_key: str | None, model: str) -> None:
-        self.api_key = api_key
+        import os
+        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
         self.model = model
         self.provider = "openrouter"
         self._token_service = TokenService()
