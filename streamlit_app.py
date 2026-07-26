@@ -436,20 +436,7 @@ retrieval_engine = st.sidebar.selectbox(
 )
 st.session_state["harness_retrieval_method"] = "advanced" if "Advanced" in retrieval_engine else "internal"
 
-# 3. Source Priority Strategy
-source_pref = st.sidebar.selectbox(
-    "Source Priority Strategy",
-    ["Auto (Smart Selection)", "Code-First (CodeGraph / Graphify)", "PDF-First (LangGraph Document RAG)"],
-    index=0,
-    key="sidebar_source_pref_select",
-    help="Sets routing priority when both codebase and PDF documents are indexed."
-)
-if "Code-First" in source_pref:
-    st.session_state["source_preference"] = "code_first"
-elif "PDF-First" in source_pref:
-    st.session_state["source_preference"] = "pdf_first"
-else:
-    st.session_state["source_preference"] = "auto"
+st.session_state["source_preference"] = "auto"
 
 # 4. Rectify Mode (Error Correction)
 rectify_on = st.sidebar.toggle(

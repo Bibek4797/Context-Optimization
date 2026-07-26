@@ -357,7 +357,34 @@ class AgentHarness:
             return {"query": user_query, "final_answer": final_answer, "iterations": 0, "history": []}
 
         # ── Build scenario-specific system prompt ────
-        system_prompt = self._build_system_prompt(scenario, source_preference)
+        computed_pref = source_preference
+        if source_preference == "auto":
+            code_keywords = {
+                "code", "function", "method", "class", "def", "import", "package", 
+                "bug", "fix", "error", "exception", "test", "implementation", 
+                "call", "variable", "parameter", "return", "syntax", "line", 
+                "file", "script", "program", "develop", "repository", "repo",
+                "git", "refactor", "patch", "modify", "correct", "rectify",
+                "loop", "statement", "dependency", "module", "inherits", "extends"
+            }
+            doc_keywords = {
+                "rule", "guideline", "policy", "document", "pdf", "manual", 
+                "instruction", "standard", "requirement", "specification", 
+                "compliance", "doc", "text", "description", "summary", 
+                "overview", "concept", "theory", "explain", "meaning"
+            }
+            query_words = set(re.findall(r"\w+", user_query.lower()))
+            code_score = len(query_words.intersection(code_keywords))
+            doc_score = len(query_words.intersection(doc_keywords))
+            
+            if code_score > doc_score:
+                computed_pref = "code_first"
+            elif doc_score > code_score:
+                computed_pref = "pdf_first"
+            else:
+                computed_pref = "auto"
+
+        system_prompt = self._build_system_prompt(scenario, computed_pref)
 
         # ── PAO Loop ─────────────────────────────────
         history: List[Dict] = []
