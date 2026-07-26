@@ -389,6 +389,34 @@ def get_configured_llm_provider():
 active_llm = get_configured_llm_provider()
 chat_service.llm_provider = active_llm
 
+# ── Sidebar Graph Retrieval & Priority Controls ──
+st.sidebar.markdown("---")
+st.sidebar.subheader("🕸️ Graph Engine & Priority")
+
+graph_system = st.sidebar.selectbox(
+    "Codebase Graph System",
+    ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)"],
+    index=0 if st.session_state.get("harness_source_selection") != "graphify" else 1,
+    key="sidebar_graph_system_select",
+    help="Select whether query context is extracted from CodeGraph (AST nodes) or Graphify (architecture graph)."
+)
+st.session_state["harness_source_selection"] = "graphify" if "Graphify" in graph_system else "codegraph"
+
+source_pref = st.sidebar.selectbox(
+    "Source Priority Strategy",
+    ["Auto (Smart Selection)", "Code-First (CodeGraph / Graphify)", "PDF-First (LangGraph Document RAG)"],
+    index=0,
+    key="sidebar_source_pref_select",
+    help="Sets routing priority when both codebase and PDF documents are indexed."
+)
+if "Code-First" in source_pref:
+    st.session_state["source_preference"] = "code_first"
+elif "PDF-First" in source_pref:
+    st.session_state["source_preference"] = "pdf_first"
+else:
+    st.session_state["source_preference"] = "auto"
+
+
 # Ingest ZIP / files helpers
 def ingest_uploaded_zip(uploaded_file) -> RepoMetadata:
     import gc

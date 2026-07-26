@@ -151,6 +151,26 @@ class ChatService:
             "notes": "Prompt tokens required if sending 100% of codebase files directly to LLM."
         }
 
+        # Clean dict conversion pass for token_usage right before QueryRecord creation
+        clean_token_usage = {}
+        for k, v in token_usage.items():
+            if isinstance(v, dict):
+                clean_token_usage[k] = {
+                    "stage": str(v.get("stage", k)),
+                    "tokens": int(v.get("tokens", 0)),
+                    "count_type": str(v.get("count_type", "exact")),
+                    "notes": v.get("notes")
+                }
+            elif hasattr(v, "tokens"):
+                clean_token_usage[k] = {
+                    "stage": str(getattr(v, "stage", k)),
+                    "tokens": int(getattr(v, "tokens", 0)),
+                    "count_type": str(getattr(v, "count_type", "exact")),
+                    "notes": getattr(v, "notes", None)
+                }
+            else:
+                clean_token_usage[k] = {"stage": str(k), "tokens": 0, "count_type": "exact"}
+
         try:
             record = QueryRecord(
                 query_id=query_id,
@@ -164,7 +184,7 @@ class ChatService:
                 source_snippets=snippets,
                 selected_nodes=selected_nodes,
                 selected_edges=selected_edges,
-                token_usage=token_usage,
+                token_usage=clean_token_usage,
                 retrieval_strategy=retrieval_strategy,
                 context=context,
                 latency_ms=int((time.perf_counter() - started) * 1000),
