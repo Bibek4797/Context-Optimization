@@ -341,7 +341,15 @@ if provider == "Gemini":
 elif provider == "Groq":
     model = st.sidebar.selectbox("Groq Model", ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"])
 elif provider == "OpenRouter":
-    model = st.sidebar.selectbox("OpenRouter Model", ["meta-llama/llama-3.3-70b-instruct:free"])
+    model = st.sidebar.selectbox(
+        "OpenRouter Model",
+        [
+            "meta-llama/llama-3.3-70b-instruct",
+            "google/gemini-2.0-flash-lite-preview-v1:0:free",
+            "deepseek/deepseek-r1:free",
+            "qwen/qwen-2.5-72b-instruct:free"
+        ]
+    )
 
 default_key = os.environ.get(f"{provider.upper()}_API_KEY", "")
 session_key_name = f"{provider.lower()}_api_key_override"
