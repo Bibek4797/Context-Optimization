@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -39,17 +39,15 @@ class RepoMetadata(BaseModel):
     status: RepoStatus = RepoStatus.pending
     stats: RepoStats = Field(default_factory=RepoStats)
     warnings: list[str] = Field(default_factory=list)
-    error: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class RepoFile(BaseModel):
     path: str
-    language: str = "python"
+    language: str
     size_bytes: int
-    line_count: int
-    parse_status: Literal["pending", "parsed", "failed"] = "pending"
+    lines: int
+    parse_status: str = "pending"
     parse_error: str | None = None
 
 
@@ -92,26 +90,24 @@ class GraphNode(BaseModel):
 
 
 class GraphEdge(BaseModel):
-    edge_id: str
-    edge_type: str
     source_node: str
     target_node: str
-    score: float | None = None
+    edge_type: str
+    score: float = 1.0
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class GraphDocument(BaseModel):
     repo_id: str
-    source: Literal["codegraph", "graphify", "graphify-fallback"]
+    source: str
     nodes: list[GraphNode] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)
-    raw_output_path: str | None = None
     warnings: list[str] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=utc_now)
 
 
 class TokenMeasurement(BaseModel):
-    model_config = ConfigDict(protected_namespaces=(), arbitrary_types_allowed=True)
+    model_config = ConfigDict(protected_namespaces=(), arbitrary_types_allowed=True, extra="allow")
     stage: str = ""
     tokens: int = 0
     count_type: Any = "estimated"
@@ -119,12 +115,55 @@ class TokenMeasurement(BaseModel):
     model: str | None = None
     notes: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_measurement_before(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return data
+        if hasattr(data, "tokens"):
+            ct = getattr(data, "count_type", "estimated")
+            ct_val = getattr(ct, "value", str(ct))
+            return {
+                "stage": str(getattr(data, "stage", "")),
+                "tokens": int(getattr(data, "tokens", 0)),
+                "count_type": ct_val,
+                "provider": getattr(data, "provider", None),
+                "model": getattr(data, "model", None),
+                "notes": getattr(data, "notes", None),
+            }
+        return data
+
 
 class TokenSummary(BaseModel):
     repo_id: str
     stages: dict[str, Any] = Field(default_factory=dict)
     cumulative_session_usage: dict[str, int] = Field(default_factory=dict)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_summary_before(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            stages = data.get("stages")
+            if isinstance(stages, dict):
+                clean_stages = {}
+                for k, v in stages.items():
+                    if isinstance(v, dict):
+                        clean_stages[k] = v
+                    elif hasattr(v, "tokens"):
+                        ct = getattr(v, "count_type", "exact")
+                        clean_stages[k] = {
+                            "stage": str(getattr(v, "stage", str(k))),
+                            "tokens": int(getattr(v, "tokens", 0)),
+                            "count_type": getattr(ct, "value", str(ct)),
+                            "provider": getattr(v, "provider", None),
+                            "model": getattr(v, "model", None),
+                            "notes": getattr(v, "notes", None),
+                        }
+                    else:
+                        clean_stages[k] = {"stage": str(k), "tokens": 0, "count_type": "exact"}
+                data["stages"] = clean_stages
+        return data
 
 
 class CodeChunk(BaseModel):
@@ -172,7 +211,7 @@ class ModelInfo(BaseModel):
 
 
 class QueryRecord(BaseModel):
-    model_config = ConfigDict(protected_namespaces=(), arbitrary_types_allowed=True)
+    model_config = ConfigDict(protected_namespaces=(), arbitrary_types_allowed=True, extra="allow")
 
     query_id: str
     repo_id: str
@@ -190,6 +229,32 @@ class QueryRecord(BaseModel):
     retrieval_strategy: str = "unknown"
     context: str = ""
     created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_query_record_before(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            tu = data.get("token_usage")
+            if isinstance(tu, dict):
+                clean_tu = {}
+                for k, v in tu.items():
+                    if isinstance(v, dict):
+                        clean_tu[k] = v
+                    elif hasattr(v, "tokens"):
+                        ct = getattr(v, "count_type", "exact")
+                        ct_val = getattr(ct, "value", str(ct))
+                        clean_tu[k] = {
+                            "stage": str(getattr(v, "stage", str(k))),
+                            "tokens": int(getattr(v, "tokens", 0)),
+                            "count_type": ct_val,
+                            "provider": getattr(v, "provider", None),
+                            "model": getattr(v, "model", None),
+                            "notes": getattr(v, "notes", None),
+                        }
+                    else:
+                        clean_tu[k] = {"stage": str(k), "tokens": 0, "count_type": "exact"}
+                data["token_usage"] = clean_tu
+        return data
 
 
 class CompareResult(BaseModel):
