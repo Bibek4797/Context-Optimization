@@ -939,14 +939,24 @@ with main_tabs[2]:
         with st.spinner("Initializing central agentic harness loop..."):
             harness = AgentHarness(chat_service=chat_service, llm_provider=active_llm)
             try:
-                # Determine max iterations based on uploaded assets
-                has_pdf = "uploaded_pdf" in st.session_state
-                has_code = "uploaded_codebase" in st.session_state
-                max_iters = 6 if has_pdf and has_code else 4
-                pref = st.session_state.get("source_preference", "auto").replace(" ", "_")
+                # Determine available assets and max iterations:
+                #   Both assets → 6 iters (query both graphs, merge)
+                #   One asset   → 4 iters (query one graph)
+                #   No assets   → 1 iter  (harness fast-paths to direct LLM answer)
+                has_pdf  = bool(st.session_state.get("uploaded_pdf"))
+                has_code = bool(st.session_state.get("uploaded_codebase"))
+                if has_pdf and has_code:
+                    max_iters = 6
+                elif has_pdf or has_code:
+                    max_iters = 4
+                else:
+                    max_iters = 1
+
+                pref = st.session_state.get("source_preference", "auto").replace(" ", "_").lower()
                 result = harness.execute(user_query, max_iterations=max_iters, source_preference=pref, callback=update_ui)
                 final_answer = result["final_answer"]
                 history_log = result["history"]
+
             except Exception as e:
                 final_answer = f"Harness loop crashed with error: {str(e)}"
                 history_log = [{"thought": "Harness execution failed", "tool": "none", "tool_input": "{}", "observation": str(e)}]

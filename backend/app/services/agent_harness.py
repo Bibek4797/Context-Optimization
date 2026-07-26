@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import traceback
 import streamlit as st
 import time
 from typing import Any, Callable, Dict, List
-import networkx as nx
 
 from app.models.schemas import QueryRecord, TokenMeasurement, CountType
 from app.services.llm.base import LLMProvider
@@ -20,70 +20,77 @@ class AgentHarness:
         self._register_default_tools()
 
     def _register_default_tools(self) -> None:
-        # Register tools with string names matching user instructions
         self.tools["todo_write"] = self.todo_write
         self.tools["todo_update"] = self.todo_update
         self.tools["query_codegraph"] = self.query_codegraph
         self.tools["query_langgraph"] = self.query_langgraph
         self.tools["spawn_subagent"] = self.spawn_subagent
 
-    # --- Tool Definitions ---
+    # ──────────────────────────────────────────────
+    # Helpers: detect what assets are currently live
+    # ──────────────────────────────────────────────
+    @staticmethod
+    def _has_codebase() -> bool:
+        return bool(st.session_state.get("repo_id"))
 
+    @staticmethod
+    def _has_pdf() -> bool:
+        G = st.session_state.get("unstructured_graph")
+        comm = st.session_state.get("unstructured_community_summaries")
+        return G is not None and bool(comm)
+
+    # ──────────────────────────────────────────────
+    # Tool Definitions
+    # ──────────────────────────────────────────────
     def todo_write(self, steps: List[str]) -> str:
-        """Use this tool to write a step-by-step plan before executing cross-graph queries."""
+        """Write a step-by-step execution plan."""
         st.session_state["harness_todo"] = [
             {"step": step, "status": "pending"} for step in steps
         ]
-        return "Task plan written successfully. Current plan:\n" + "\n".join(
-            f"{i}. [pending] {step}" for i, step in enumerate(steps)
+        return "Task plan written:\n" + "\n".join(
+            f"{i+1}. [pending] {step}" for i, step in enumerate(steps)
         )
 
     def todo_update(self, step_index: int, status: str) -> str:
-        """Use this tool to update the status of a step (e.g. 'completed', 'in_progress', 'pending')."""
+        """Update the status of a plan step ('pending', 'in_progress', 'completed')."""
         if "harness_todo" not in st.session_state:
-            return "Error: No active plan found. Write a plan first using todo_write."
+            return "Error: No active plan. Call todo_write first."
         todo_list = st.session_state["harness_todo"]
         if step_index < 0 or step_index >= len(todo_list):
-            return f"Error: Invalid step index {step_index}. Plan has {len(todo_list)} steps."
-        
-        valid_statuses = ["pending", "in_progress", "completed"]
-        if status not in valid_statuses:
-            return f"Error: Invalid status '{status}'. Must be one of {valid_statuses}."
-            
+            return f"Error: step_index {step_index} out of range (plan has {len(todo_list)} steps)."
+        valid = ["pending", "in_progress", "completed"]
+        if status not in valid:
+            return f"Error: status '{status}' invalid. Must be one of {valid}."
         todo_list[step_index]["status"] = status
         st.session_state["harness_todo"] = todo_list
-        return f"Step {step_index} updated to status '{status}' successfully."
+        return f"Step {step_index} → '{status}'."
 
     def query_codegraph(self, query: str) -> str:
-        """Use this tool to map functional relationships and dependencies from codebase source files."""
+        """Query the AST-based codebase CodeGraph for structural/dependency relationships."""
         if "retrieval_history" not in st.session_state:
             st.session_state["retrieval_history"] = []
 
-        repo_id = st.session_state.get("repo_id")
-        if not repo_id:
-            err_msg = "Error: No repository uploaded/active. Please upload a codebase in Tab 0 first."
+        # Guard: must have a codebase
+        if not self._has_codebase():
+            err = "No codebase uploaded. Please upload a codebase ZIP in the Ingest tab first."
             st.session_state["retrieval_history"].insert(0, {
-                "timestamp": time.strftime("%H:%M:%S"),
-                "query": query,
-                "type": "CodeGraph (AST)",
-                "context_retrieved": err_msg,
-                "answer": err_msg
+                "timestamp": time.strftime("%H:%M:%S"), "query": query,
+                "type": "CodeGraph (AST)", "context_retrieved": err,
+                "answer": err, "context_tokens": 0
             })
-            return err_msg
+            return f"Error: {err}"
+
+        repo_id = st.session_state["repo_id"]
+        source_selection = st.session_state.get("harness_source_selection", "codegraph")
+        retrieval_method = st.session_state.get("harness_retrieval_method", "internal")
+        max_nodes = st.session_state.get("harness_max_nodes", 8)
+        graphify_mode = st.session_state.get("harness_graphify_mode", "bfs")
+        max_neighbors = st.session_state.get("harness_max_neighbors", 4)
+        rectify = st.session_state.get("harness_rectify_mode", False)
 
         try:
-            # Retrieve dynamic configuration from st.session_state (populated from Tab 2)
-            source_selection = st.session_state.get("harness_source_selection", "codegraph")
-            retrieval_method = st.session_state.get("harness_retrieval_method", "internal")
-            max_nodes = st.session_state.get("harness_max_nodes", 8)
-            graphify_mode = st.session_state.get("harness_graphify_mode", "bfs")
-            max_neighbors = st.session_state.get("harness_max_neighbors", 4)
-
-            rectify = st.session_state.get("harness_rectify_mode", False)
-
             record = self.chat_service.graph_optimized_qa(
-                repo_id=repo_id,
-                query=query,
+                repo_id=repo_id, query=query,
                 source_selection=source_selection,
                 retrieval_method=retrieval_method,
                 max_nodes=max_nodes,
@@ -92,27 +99,19 @@ class AgentHarness:
                 rectify=rectify,
             )
 
-            # Build structured representations of selected nodes and edges for inspection
-            nodes_info = []
-            if record.selected_nodes:
-                for n in record.selected_nodes:
-                    nodes_info.append({
-                        "node_id": n.node_id,
-                        "type": n.node_type,
-                        "label": n.label,
-                        "file_path": n.file_path,
-                        "line_start": n.line_start,
-                        "line_end": n.line_end
-                    })
-            edges_info = []
-            if record.selected_edges:
-                for e in record.selected_edges:
-                    edges_info.append({
-                        "edge_id": e.edge_id,
-                        "type": e.edge_type,
-                        "src": e.source_node,
-                        "tgt": e.target_node
-                    })
+            ctx_retrieved = getattr(record, "context", "") or ""
+            ans_text = getattr(record, "answer", "") or ""
+
+            nodes_info = [
+                {"node_id": n.node_id, "type": n.node_type, "label": n.label,
+                 "file_path": n.file_path, "line_start": n.line_start, "line_end": n.line_end}
+                for n in (record.selected_nodes or [])
+            ]
+            edges_info = [
+                {"edge_id": e.edge_id, "type": e.edge_type,
+                 "src": e.source_node, "tgt": e.target_node}
+                for e in (record.selected_edges or [])
+            ]
 
             rec_entry = {
                 "timestamp": time.strftime("%H:%M:%S"),
@@ -120,7 +119,7 @@ class AgentHarness:
                 "type": f"CodeGraph ({source_selection.upper()})",
                 "source_system": source_selection,
                 "retrieval_method": retrieval_method,
-                "retrieval_strategy": record.retrieval_strategy,
+                "retrieval_strategy": getattr(record, "retrieval_strategy", ""),
                 "max_nodes": max_nodes,
                 "max_neighbors": max_neighbors,
                 "graphify_mode": graphify_mode if source_selection == "graphify" else None,
@@ -134,87 +133,73 @@ class AgentHarness:
             st.session_state["retrieval_history"].insert(0, rec_entry)
 
             if record.status == "failed":
-                return f"Error querying CodeGraph: {record.error}"
+                return f"CodeGraph query failed: {record.error}"
 
-            return f"CodeGraph Answer for '{query}':\n{record.answer}\n\nContext Retrieved:\n{record.context}"
+            return f"CodeGraph Answer for '{query}':\n{ans_text}\n\nContext Retrieved:\n{ctx_retrieved}"
+
         except Exception as e:
-            err_msg = f"Exception querying CodeGraph: {str(e)}"
+            err = f"Exception querying CodeGraph: {str(e)}"
             st.session_state["retrieval_history"].insert(0, {
-                "timestamp": time.strftime("%H:%M:%S"),
-                "query": query,
+                "timestamp": time.strftime("%H:%M:%S"), "query": query,
                 "type": f"CodeGraph ({source_selection.upper()})",
                 "source_system": source_selection,
                 "retrieval_method": retrieval_method,
                 "retrieval_strategy": "Failed Query",
-                "context_retrieved": err_msg,
-                "answer": err_msg,
-                "context_tokens": 0
+                "context_retrieved": err, "answer": err, "context_tokens": 0
             })
-            return err_msg
+            return err
 
     def query_langgraph(self, query: str) -> str:
-        """Use this tool strictly for retrieving unstructured knowledge from PDFs using community detection."""
+        """Query the unstructured PDF LangGraph using Louvain community detection."""
         if "retrieval_history" not in st.session_state:
             st.session_state["retrieval_history"] = []
 
-        # Check if the unstructured graph exists in session state
-        G = st.session_state.get("unstructured_graph")
-        comm_sums = st.session_state.get("unstructured_community_summaries")
-        
-        if G is None or not comm_sums:
-            err_msg = "Error: No PDF/unstructured document indexed yet. User must upload and build the PDF graph first."
+        # Guard: must have a built PDF graph with community summaries
+        if not self._has_pdf():
+            err = ("No PDF/LangGraph indexed yet. "
+                   "Please upload PDFs, build LangGraph, detect communities, "
+                   "and summarize them in the Ingest tab first.")
             st.session_state["retrieval_history"].insert(0, {
-                "timestamp": time.strftime("%H:%M:%S"),
-                "query": query,
-                "type": "LangGraph (PDF)",
-                "source_system": "langgraph",
+                "timestamp": time.strftime("%H:%M:%S"), "query": query,
+                "type": "LangGraph (PDF)", "source_system": "langgraph",
                 "retrieval_method": "louvain_community_detection",
                 "retrieval_strategy": "Louvain Community Detection",
-                "ranked_communities": [],
-                "per_comm_details": [],
-                "merged_context_prompt": err_msg,
-                "context_tokens": 0
+                "ranked_communities": [], "per_comm_details": [],
+                "merged_context_prompt": err, "context_tokens": 0
             })
-            return err_msg
-            
+            return f"Error: {err}"
+
+        G = st.session_state["unstructured_graph"]
+        comm_sums = st.session_state["unstructured_community_summaries"]
+
         try:
             from app.services.unstructured.retrieval import run_full_query_pipeline
             embs = st.session_state.get("unstructured_community_embeddings", {})
             cache = st.session_state.get("unstructured_node_embeddings", {})
-            
+
             results = run_full_query_pipeline(query, G, comm_sums, embs, cache)
-            
-            # Save updated cache back
             st.session_state["unstructured_node_embeddings"] = results["updated_node_embeddings_cache"]
-            
+
             per_comm_details = []
             merged_context_parts = []
             for cid, score in results.get("ranked_communities", []):
                 comm_ctx = results.get("per_community_contexts", {}).get(cid, {})
-                summary_text = comm_ctx.get("summary", "")
-                partial_ans = comm_ctx.get("partial_answer", "")
-                anchors = comm_ctx.get("anchors", [])
-                
                 per_comm_details.append({
-                    "cid": cid,
-                    "score": score,
-                    "summary": summary_text,
-                    "partial_answer": partial_ans,
-                    "anchors": anchors
+                    "cid": cid, "score": score,
+                    "summary": comm_ctx.get("summary", ""),
+                    "partial_answer": comm_ctx.get("partial_answer", ""),
+                    "anchors": comm_ctx.get("anchors", [])
                 })
-                
                 merged_context_parts.append(
-                    f"--- Community {cid} (Relevance Score: {score:.3f}) ---\n"
-                    f"Summary: {summary_text}\n"
-                    f"Intermediate Answer: {partial_ans}"
+                    f"--- Community {cid} (Score: {score:.3f}) ---\n"
+                    f"Summary: {comm_ctx.get('summary', '')}\n"
+                    f"Intermediate Answer: {comm_ctx.get('partial_answer', '')}"
                 )
 
             merged_text = "\n\n".join(merged_context_parts)
             st.session_state["retrieval_history"].insert(0, {
-                "timestamp": time.strftime("%H:%M:%S"),
-                "query": query,
-                "type": "LangGraph (PDF)",
-                "source_system": "langgraph",
+                "timestamp": time.strftime("%H:%M:%S"), "query": query,
+                "type": "LangGraph (PDF)", "source_system": "langgraph",
                 "retrieval_method": "louvain_community_detection",
                 "retrieval_strategy": "Louvain Community Detection + Hybrid Subgraph Search",
                 "ranked_communities": results.get("ranked_communities", []),
@@ -222,54 +207,47 @@ class AgentHarness:
                 "merged_context_prompt": merged_text,
                 "context_tokens": self.chat_service.token_service.estimate_tokens(merged_text)
             })
-            
+
             return f"LangGraph Answer for '{query}':\n{results['final_answer']}"
+
         except Exception as e:
-            err_msg = f"Exception querying LangGraph: {str(e)}"
+            err = f"Exception querying LangGraph: {str(e)}"
             st.session_state["retrieval_history"].insert(0, {
-                "timestamp": time.strftime("%H:%M:%S"),
-                "query": query,
-                "type": "LangGraph (PDF)",
-                "source_system": "langgraph",
+                "timestamp": time.strftime("%H:%M:%S"), "query": query,
+                "type": "LangGraph (PDF)", "source_system": "langgraph",
                 "retrieval_method": "louvain_community_detection",
                 "retrieval_strategy": "Failed Query",
-                "ranked_communities": [],
-                "per_comm_details": [],
-                "merged_context_prompt": err_msg,
-                "context_tokens": 0
+                "ranked_communities": [], "per_comm_details": [],
+                "merged_context_prompt": err, "context_tokens": 0
             })
-            return err_msg
+            return err
 
     def spawn_subagent(self, task_description: str, graph_type: str) -> str:
-        """Use this tool to delegate massive graph traversals to an isolated context window, returning only a clean text summary to the main loop."""
-        # Identify the target graph
+        """Delegate a large graph traversal to an isolated context window; returns a clean text summary."""
         if graph_type == "codegraph":
-            repo_id = st.session_state.get("repo_id")
-            if not repo_id:
+            if not self._has_codebase():
                 return "Error: No codebase CodeGraph active."
-            graph_doc = self.chat_service.storage.load_codegraph(repo_id)
+            graph_doc = self.chat_service.storage.load_codegraph(st.session_state["repo_id"])
             if not graph_doc:
                 return "Error: CodeGraph could not be loaded."
-            
-            # Serialize CodeGraph nodes and edges for traversal
             nodes_text = "\n".join(
-                f"- Node: {n.node_id} ({n.node_type}), Label={n.label}, File={n.file_path}"
-                for n in graph_doc.nodes[:100]  # Cap to prevent token limit issues
+                f"- {n.node_id} ({n.node_type}) label={n.label} file={n.file_path}"
+                for n in graph_doc.nodes[:100]
             )
             edges_text = "\n".join(
                 f"- {e.source_node} --[{e.edge_type}]--> {e.target_node}"
                 for e in graph_doc.edges[:150]
             )
             graph_text = f"Nodes:\n{nodes_text}\n\nEdges:\n{edges_text}"
-            
+
         elif graph_type == "langgraph":
-            G = st.session_state.get("unstructured_graph")
-            if G is None:
+            if not self._has_pdf():
                 return "Error: No unstructured LangGraph active."
-            
-            # Serialize unstructured graph
+            G = st.session_state["unstructured_graph"]
             nodes_text = "\n".join(
-                f"- Node: {node}, Label={G.nodes[node].get('label')}, Type={G.nodes[node].get('type')}, Community={G.nodes[node].get('community_id')}, Desc={G.nodes[node].get('description')[:120]}..."
+                f"- {node} label={G.nodes[node].get('label')} type={G.nodes[node].get('type')} "
+                f"community={G.nodes[node].get('community_id')} "
+                f"desc={str(G.nodes[node].get('description', ''))[:100]}"
                 for node in list(G.nodes)[:100]
             )
             edges_text = "\n".join(
@@ -278,234 +256,268 @@ class AgentHarness:
             )
             graph_text = f"Nodes:\n{nodes_text}\n\nEdges:\n{edges_text}"
         else:
-            return f"Error: Invalid graph_type '{graph_type}'. Must be 'codegraph' or 'langgraph'."
+            return f"Error: graph_type must be 'codegraph' or 'langgraph', got '{graph_type}'."
 
-        prompt = f"""You are an isolated subagent specializing in graph traversal and analysis.
-Your task is: {task_description}
-
-Here is the serialized graph representation:
-{graph_text}
-
-Perform the traversal, trace relationships, and summarize the findings. Return ONLY a clean text summary of your traversal path and findings. Do not output JSON or conversational fluff.
-"""
+        prompt = (
+            f"You are an isolated subagent specializing in graph traversal.\n"
+            f"Task: {task_description}\n\n"
+            f"Graph:\n{graph_text}\n\n"
+            f"Trace relationships and return ONLY a clean text summary of your findings."
+        )
         try:
             response = self.llm_provider.generate_answer(prompt)
-            return f"Subagent Traversal Summary for task '{task_description}':\n{response.text}"
+            return f"Subagent Summary:\n{response.text}"
         except Exception as e:
-            return f"Exception during subagent execution: {str(e)}"
+            return f"Exception in subagent: {str(e)}"
 
-    # --- Master Loop ---
+    # ──────────────────────────────────────────────
+    # Master Execution Loop
+    # ──────────────────────────────────────────────
+    def execute(
+        self,
+        user_query: str,
+        max_iterations: int = 6,
+        source_preference: str = "auto",
+        callback: Any = None
+    ) -> dict[str, Any]:
+        """
+        Perception-Action-Observation loop.
 
-    def execute(self, user_query: str, max_iterations: int = 6, source_preference: str = "auto", callback: Any = None) -> dict[str, Any]:
-        """Execute the perception-action-observation loop to answer the user query."""
-        history = []
-        final_answer = None
-        consecutive_errors = 0
-        
-        # Reset harness checklist
+        Scenario routing (determined at call time, before any LLM call):
+          • Only codebase  → only query_codegraph is available
+          • Only PDF       → only query_langgraph is available
+          • Both           → both tools available, preference guided by source_preference
+          • Neither        → direct LLM answer, no graph tools needed
+        """
+        has_code = self._has_codebase()
+        has_pdf  = self._has_pdf()
+
+        # ── Scenario classification ──────────────────
+        if has_code and has_pdf:
+            scenario = "both"
+        elif has_code:
+            scenario = "code_only"
+        elif has_pdf:
+            scenario = "pdf_only"
+        else:
+            scenario = "none"
+
+        # ── Initialise harness checklist ─────────────
+        # Always use "step" key (fixes the KeyError bug)
+        if scenario == "both":
+            initial_steps = [
+                f"Understand query: '{user_query[:50]}'",
+                "Query CodeGraph for structural/code context",
+                "Query LangGraph for PDF/document context",
+                "Synthesize merged final answer",
+            ]
+        elif scenario == "code_only":
+            initial_steps = [
+                f"Understand query: '{user_query[:50]}'",
+                "Query CodeGraph for code structure and dependencies",
+                "Synthesize final answer from code context",
+            ]
+        elif scenario == "pdf_only":
+            initial_steps = [
+                f"Understand query: '{user_query[:50]}'",
+                "Query LangGraph communities for document facts",
+                "Synthesize final answer from document context",
+            ]
+        else:
+            initial_steps = [
+                f"Understand query: '{user_query[:50]}'",
+                "Answer directly from LLM knowledge (no graphs uploaded)",
+            ]
+
         st.session_state["harness_todo"] = [
-            {"task": f"Deconstruct user query: '{user_query[:40]}...'", "status": "in_progress"},
-            {"task": "Select graph system (CodeGraph / Graphify / LangGraph)", "status": "pending"},
-            {"task": "Extract targeted subgraph snippets", "status": "pending"},
-            {"task": "Synthesize clean final answer", "status": "pending"}
+            {"step": s, "status": "pending"} for s in initial_steps
         ]
-        if callback:
-            callback(history, st.session_state["harness_todo"])
+        # Mark first step in progress
+        st.session_state["harness_todo"][0]["status"] = "in_progress"
 
+        if callback:
+            callback([], st.session_state["harness_todo"])
+
+        # ── Fast-path: no graphs at all ──────────────
+        if scenario == "none":
+            try:
+                direct_prompt = (
+                    f"Answer the following question using your own knowledge. "
+                    f"No external graphs are available.\n\nQuestion: {user_query}"
+                )
+                resp = self.llm_provider.generate_answer(direct_prompt)
+                final_answer = resp.text.strip()
+            except Exception as e:
+                final_answer = f"Error generating direct answer: {str(e)}"
+
+            for item in st.session_state["harness_todo"]:
+                item["status"] = "completed"
+            if callback:
+                callback([], st.session_state["harness_todo"])
+            return {"query": user_query, "final_answer": final_answer, "iterations": 0, "history": []}
+
+        # ── Build scenario-specific system prompt ────
+        system_prompt = self._build_system_prompt(scenario, source_preference)
+
+        # ── PAO Loop ─────────────────────────────────
+        history: List[Dict] = []
+        final_answer: str | None = None
+        consecutive_errors = 0
         iteration = 0
+
         while iteration < max_iterations:
             iteration += 1
-            
-            # Check 92% Context Compression threshold (12,000 char budget * 0.92 = 11,040 chars)
-            history_lines_check = []
-            for step_idx, step in enumerate(history):
-                history_lines_check.append(f"Thought: {step.get('thought', '')} Action: {step.get('tool', '')} Observation: {step.get('observation', '')}")
-            current_history_size = len("\n".join(history_lines_check))
-            
-            if current_history_size >= 11040 and len(history) > 3:
-                # Keep first plan step and the most recent 2 steps intact; compress middle turns
-                recent_history = history[-2:]
+
+            # ── 92% Context Window Compression ───────
+            history_lines_check = [
+                f"Thought:{s.get('thought','')} Action:{s.get('tool','')} Obs:{s.get('observation','')}"
+                for s in history
+            ]
+            current_size = len("\n".join(history_lines_check))
+
+            if current_size >= 11040 and len(history) > 3:
                 first_step = history[0] if history[0].get("tool") == "todo_write" else None
-                middle_steps = history[1:-2] if first_step else history[:-2]
-                
-                compressed_lines = [
-                    f"- Turn called '{m.get('tool')}' and observed: {str(m.get('observation'))[:180]}..."
-                    for m in middle_steps
-                ]
-                summary_obs = "Summary of compressed previous iterations:\n" + "\n".join(compressed_lines)
-                
-                compressed_step = {
-                    "thought": "Automatically compressed older history to maintain 92% context safety threshold.",
+                middle = history[1:-2] if first_step else history[:-2]
+                recent = history[-2:]
+                compressed_obs = "Compressed prior iterations:\n" + "\n".join(
+                    f"- {m.get('tool')} → {str(m.get('observation',''))[:180]}..."
+                    for m in middle
+                )
+                compressed = {
+                    "thought": "History compressed at 92% context threshold.",
                     "tool": "history_compressor",
                     "tool_input": "{}",
-                    "observation": summary_obs
+                    "observation": compressed_obs
                 }
-                
-                if first_step:
-                    history = [first_step, compressed_step] + recent_history
-                else:
-                    history = [compressed_step] + recent_history
+                history = ([first_step] if first_step else []) + [compressed] + recent
 
-            # 1. Construct prompt showing history
-            history_lines = []
-            for step_idx, step in enumerate(history):
-                history_lines.append(f"### Iteration {step_idx + 1}")
-                history_lines.append(f"Thought: {step.get('thought', '')}")
-                history_lines.append(f"Action: Call tool '{step.get('tool', '')}' with inputs {step.get('tool_input', '')}")
-                history_lines.append(f"Observation: {step.get('observation', '')}")
-                history_lines.append("")
-                
-            history_text = "\n".join(history_lines)
-            
-            system_prompt = self._get_system_prompt()
-            
-            prompt = f"""{system_prompt}
+            # ── Build prompt ──────────────────────────
+            history_text = "\n".join(
+                f"### Iteration {i+1}\n"
+                f"Thought: {s.get('thought','')}\n"
+                f"Action: {s.get('tool','')} inputs={s.get('tool_input','{}')}\n"
+                f"Observation: {s.get('observation','')}\n"
+                for i, s in enumerate(history)
+            )
 
-User Question: {user_query}
+            prompt = (
+                f"{system_prompt}\n\n"
+                f"User Question: {user_query}\n\n"
+                f"### Execution History:\n{history_text}\n\n"
+                f"### Next Step:\nOutput only a valid JSON object."
+            )
 
-### Loop Execution History:
-{history_text}
-
-### Next Step:
-Provide the JSON response for the current iteration.
-"""
-            
-            # 2. Call LLM
+            # ── Call LLM ─────────────────────────────
             try:
-                llm_response = self.llm_provider.generate_answer(prompt)
-                response_text = llm_response.text.strip()
-                consecutive_errors = 0  # Reset on success
+                llm_resp = self.llm_provider.generate_answer(prompt)
+                response_text = llm_resp.text.strip()
+                consecutive_errors = 0
             except Exception as e:
                 consecutive_errors += 1
-                observation = f"Error calling LLM provider: {str(e)}"
-                history.append({
-                    "thought": "LLM generation failed, attempting to retry.",
-                    "tool": "none",
-                    "tool_input": "{}",
-                    "observation": observation
-                })
+                obs = f"LLM call failed: {str(e)}"
+                history.append({"thought": "LLM error.", "tool": "none", "tool_input": "{}", "observation": obs})
                 if callback:
                     callback(history, st.session_state.get("harness_todo", []))
-                
                 if consecutive_errors >= 3:
-                    final_answer = f"The Agent Harness was aborted after 3 consecutive LLM API failures. Please check your API key, billing status, or rate limits. Last error: {str(e)}"
+                    final_answer = (
+                        f"Harness aborted after 3 consecutive LLM failures. "
+                        f"Check your API key / rate limits. Last error: {str(e)}"
+                    )
                     break
-                    
-                time.sleep(3.0)  # Cool down to let rate limits clear
+                time.sleep(3.0)
                 continue
 
-            # 3. Parse JSON from LLM
-            parsed_response = {}
+            # ── Parse JSON ────────────────────────────
+            parsed: dict = {}
             try:
-                # Strip markdown code blocks if present
-                clean_text = response_text
-                if clean_text.startswith("```"):
-                    clean_text = re.sub(r"^```(?:json)?\n", "", clean_text)
-                    clean_text = re.sub(r"\n```$", "", clean_text)
-                clean_text = clean_text.strip()
-                parsed_response = json.loads(clean_text)
-            except Exception as e:
-                # Find JSON block manually
-                start = response_text.find("{")
-                end = response_text.rfind("}")
-                if start != -1 and end != -1:
+                clean = re.sub(r"^```(?:json)?\n?", "", response_text.strip())
+                clean = re.sub(r"\n?```$", "", clean).strip()
+                parsed = json.loads(clean)
+            except Exception:
+                # Try to extract first JSON object
+                s = response_text.find("{"); e = response_text.rfind("}")
+                if s != -1 and e != -1:
                     try:
-                        parsed_response = json.loads(response_text[start:end+1])
+                        parsed = json.loads(response_text[s:e+1])
                     except Exception:
                         pass
-                if not parsed_response:
-                    observation = f"Error: Output was not valid JSON. Response received: {response_text}. Please return only valid JSON."
-                    history.append({
-                        "thought": "LLM returned malformed output.",
-                        "tool": "none",
-                        "tool_input": "{}",
-                        "observation": observation
-                    })
-                    if callback:
-                        callback(history, st.session_state.get("harness_todo", []))
-                    continue
+            if not parsed:
+                obs = f"Non-JSON output received: {response_text[:300]}"
+                history.append({"thought": "Bad LLM output.", "tool": "none", "tool_input": "{}", "observation": obs})
+                if callback:
+                    callback(history, st.session_state.get("harness_todo", []))
+                continue
 
-            # 4. Process response
-            thought = parsed_response.get("thought", "")
-            
-            # Check if final answer is returned
-            if "final_answer" in parsed_response:
-                final_answer = parsed_response["final_answer"]
-                
-                # Auto-complete all remaining checklist steps!
-                todo_list = st.session_state.get("harness_todo", [])
-                for step in todo_list:
-                    step["status"] = "completed"
-                st.session_state["harness_todo"] = todo_list
-                
-                history.append({
-                    "thought": thought,
-                    "tool": "none",
-                    "tool_input": "{}",
-                    "observation": "Final answer generated."
-                })
+            thought = parsed.get("thought", "")
+
+            # ── Final answer? ─────────────────────────
+            if "final_answer" in parsed:
+                final_answer = parsed["final_answer"]
+                for item in st.session_state.get("harness_todo", []):
+                    item["status"] = "completed"
+                history.append({"thought": thought, "tool": "none", "tool_input": "{}", "observation": "Final answer produced."})
                 if callback:
                     callback(history, st.session_state.get("harness_todo", []))
                 break
-                
-            # Process tool call
-            tool_name = parsed_response.get("tool")
-            tool_input = parsed_response.get("tool_input", {})
-            
+
+            # ── Tool call ─────────────────────────────
+            tool_name = parsed.get("tool")
+            tool_input = parsed.get("tool_input", {})
+
             if not tool_name:
-                observation = "Error: JSON must contain either 'final_answer' or a 'tool' to call."
-                history.append({
-                    "thought": thought,
-                    "tool": "none",
-                    "tool_input": "{}",
-                    "observation": observation
-                })
+                obs = "JSON must contain 'final_answer' or 'tool'."
+                history.append({"thought": thought, "tool": "none", "tool_input": "{}", "observation": obs})
                 if callback:
                     callback(history, st.session_state.get("harness_todo", []))
                 continue
-                
-            # Dispatch tool
-            observation = ""
+
+            # Guard: prevent the LLM calling a tool that doesn't apply to the current scenario
+            if tool_name == "query_codegraph" and not has_code:
+                obs = "Tool 'query_codegraph' is unavailable: no codebase has been uploaded."
+                history.append({"thought": thought, "tool": tool_name, "tool_input": json.dumps(tool_input), "observation": obs})
+                if callback:
+                    callback(history, st.session_state.get("harness_todo", []))
+                continue
+
+            if tool_name == "query_langgraph" and not has_pdf:
+                obs = "Tool 'query_langgraph' is unavailable: no PDF LangGraph has been built."
+                history.append({"thought": thought, "tool": tool_name, "tool_input": json.dumps(tool_input), "observation": obs})
+                if callback:
+                    callback(history, st.session_state.get("harness_todo", []))
+                continue
+
             if tool_name not in self.tools:
-                observation = f"Error: Tool '{tool_name}' is not registered. Available tools: {list(self.tools.keys())}."
+                obs = f"Unknown tool '{tool_name}'. Available: {list(self.tools.keys())}."
             else:
-                # Catch all errors in try-except block so the loop never breaks
                 try:
-                    # Execute tool function
-                    if isinstance(tool_input, dict):
-                        observation = self.tools[tool_name](**tool_input)
-                    else:
-                        observation = self.tools[tool_name](tool_input)
-                        
-                    # Auto-update the checklist: mark the first pending/in_progress step as completed!
-                    if tool_name not in ["todo_write", "todo_update"]:
-                        todo_list = st.session_state.get("harness_todo", [])
-                        for step in todo_list:
-                            if step.get("status") in ["pending", "in_progress"]:
-                                step["status"] = "completed"
-                                st.session_state["harness_todo"] = todo_list
+                    obs = self.tools[tool_name](**tool_input) if isinstance(tool_input, dict) else self.tools[tool_name](tool_input)
+                    # Auto-advance the first non-completed checklist step
+                    if tool_name not in ("todo_write", "todo_update"):
+                        todo = st.session_state.get("harness_todo", [])
+                        for item in todo:
+                            if item.get("status") in ("pending", "in_progress"):
+                                item["status"] = "completed"
+                                st.session_state["harness_todo"] = todo
                                 break
                 except Exception as exc:
-                    observation = f"Error executing tool '{tool_name}': {str(exc)}\n{traceback.format_exc()}"
-            
-            # Log step
+                    obs = f"Error executing '{tool_name}': {str(exc)}\n{traceback.format_exc()}"
+
             history.append({
                 "thought": thought,
                 "tool": tool_name,
                 "tool_input": json.dumps(tool_input),
-                "observation": str(observation)
+                "observation": str(obs)
             })
-            
             if callback:
                 callback(history, st.session_state.get("harness_todo", []))
-                
-            # Sleep a bit and force rerun in UI so it updates live
-            time.sleep(0.5)
-            # st.rerun() can be triggered by the caller to refresh the page/sidebar
-            
+            time.sleep(0.4)
+
         if final_answer is None:
-            final_answer = f"The Agent Harness exceeded the limit of {max_iterations} iterations without finding a final answer. Please narrow down your query."
-            
+            final_answer = (
+                f"Harness reached the {max_iterations}-iteration limit without a final answer. "
+                f"Try narrowing your question or uploading the required assets."
+            )
+
         return {
             "query": user_query,
             "final_answer": final_answer,
@@ -513,48 +525,111 @@ Provide the JSON response for the current iteration.
             "history": history
         }
 
-    def _get_system_prompt(self) -> str:
-        return """You are the central Agentic Harness Planner. Your goal is to answer the user's query by coordinating information from a codebase CodeGraph and an unstructured document LangGraph.
+    # ──────────────────────────────────────────────
+    # Dynamic System Prompt (scenario-aware)
+    # ──────────────────────────────────────────────
+    def _build_system_prompt(self, scenario: str, source_preference: str) -> str:
+        """
+        Build the LLM system prompt based on exactly what assets are available.
+        This prevents the LLM from hallucinating tool calls for missing assets.
+        """
 
-You have access to a Tool Dispatch Registry with the following tools:
-1. `todo_write`: Write a step-by-step execution plan.
-   Args: {"steps": ["step 1", "step 2", ...]}
-2. `query_codegraph`: Query the codebase CodeGraph for structure/dependency relationships.
-   Args: {"query": "string query"}
-3. `query_langgraph`: Query the unstructured document LangGraph for PDF text facts using community detection.
-   Args: {"query": "string query"}
-4. `spawn_subagent`: Delegate a massive graph traversal to an isolated context window, returning a clean text summary.
-   Args: {"task_description": "string describing the traversal", "graph_type": "codegraph" | "langgraph"}
+        # Tool descriptions shown conditionally
+        codegraph_desc = (
+            "1. `query_codegraph`: Query the AST-based codebase graph for structural "
+            "relationships, function calls, class hierarchies, and file dependencies.\n"
+            "   Args: {\"query\": \"your query string\"}"
+        )
+        langgraph_desc = (
+            "2. `query_langgraph`: Query the PDF document graph using Louvain community "
+            "detection to retrieve relevant document facts and guidelines.\n"
+            "   Args: {\"query\": \"your query string\"}"
+        )
+        spawn_desc = (
+            "3. `spawn_subagent`: Delegate a complex graph traversal to an isolated subagent "
+            "that returns a clean summary. Only use for very large traversals.\n"
+            "   Args: {\"task_description\": \"...\", \"graph_type\": \"codegraph\" | \"langgraph\"}"
+        )
+        plan_desc = (
+            "0. `todo_write`: Write a step-by-step execution plan BEFORE querying. "
+            "For simple single-topic queries you MAY skip this.\n"
+            "   Args: {\"steps\": [\"step 1\", \"step 2\", ...]}"
+        )
 
-CRITICAL INSTRUCTIONS:
-- For complex multi-step queries, write a step-by-step plan using `todo_write` before querying. For direct single-topic queries (asking directly about a single PDF fact or codebase file), you MAY skip `todo_write` and invoke `query_langgraph` or `query_codegraph` directly in Turn 1 to save API turns.
-- Do NOT output any status update commands. The backend automatically tracks and completes your plan tasks as you call the corresponding query tools.
-- Do not make assumptions. Query the appropriate graph using the tools.
-- All actions must be output as valid JSON matching the format below.
+        if scenario == "code_only":
+            tools_section = (
+                "## Available Tools\n"
+                f"{plan_desc}\n"
+                f"{codegraph_desc}\n"
+                f"{spawn_desc}\n\n"
+                "IMPORTANT: Only `query_codegraph` and `spawn_subagent` (graph_type='codegraph') "
+                "are available. The user has uploaded a codebase only. "
+                "Do NOT call `query_langgraph` — no PDF has been indexed."
+            )
+            strategy = "Answer from the codebase CodeGraph. Focus on structural dependencies, function relationships, and file-level analysis."
 
-CRITICAL RESPONSE FORMATTING FOR FINAL ANSWER:
-- Your final_answer MUST be direct, clear, concise, and natural.
-- Do NOT include any meta-commentary, technical jargon, or self-referential filler such as "based on the codebase graph", "derived from community 0", "according to the AST traversal", "we found that", or listing entity types explicitly (e.g. do NOT write: "The relevant entities involved are X, a person, and Y, an organization").
-- Answer the user's question directly and concisely as a senior software architect.
+        elif scenario == "pdf_only":
+            tools_section = (
+                "## Available Tools\n"
+                f"{plan_desc}\n"
+                f"{langgraph_desc}\n"
+                f"{spawn_desc}\n\n"
+                "IMPORTANT: Only `query_langgraph` and `spawn_subagent` (graph_type='langgraph') "
+                "are available. The user has uploaded PDFs only. "
+                "Do NOT call `query_codegraph` — no codebase has been indexed."
+            )
+            strategy = "Answer from the PDF LangGraph. Focus on document facts, guidelines, and community-detected themes."
 
-Output Format:
-Your response must be a single, valid JSON object containing either a tool call or the final answer.
-To call a tool, output:
-{
-  "thought": "Your thought process about why you are calling this tool.",
+        else:  # both
+            if source_preference == "code_first":
+                priority = "Prefer `query_codegraph` first. Then supplement with `query_langgraph` if additional document context is needed."
+            elif source_preference == "pdf_first":
+                priority = "Prefer `query_langgraph` first. Then supplement with `query_codegraph` if additional code context is needed."
+            else:  # auto
+                priority = (
+                    "Choose the tool that best matches the query intent: "
+                    "use `query_codegraph` for code/structural questions and "
+                    "`query_langgraph` for document/guideline questions. "
+                    "For hybrid questions, query both."
+                )
+            tools_section = (
+                "## Available Tools\n"
+                f"{plan_desc}\n"
+                f"{codegraph_desc}\n"
+                f"{langgraph_desc}\n"
+                f"{spawn_desc}\n\n"
+                f"Source Selection Strategy: {priority}"
+            )
+            strategy = "Merge insights from both the codebase CodeGraph and the PDF LangGraph to provide a comprehensive answer."
+
+        return f"""You are the central Agentic Harness Planner for a Context Optimization Engine.
+Your goal is to answer the user's query by querying the correct graph knowledge base(s).
+
+{tools_section}
+
+## Answer Strategy
+{strategy}
+
+## Output Format
+Every response must be a single valid JSON object — one of:
+
+Tool call:
+{{
+  "thought": "Why you are calling this tool.",
   "tool": "tool_name",
-  "tool_input": {
-    "arg1": "value1"
-  }
-}
+  "tool_input": {{"arg": "value"}}
+}}
 
-To return the final answer, output:
-{
-  "thought": "Your final synthesis thought.",
-  "final_answer": "Your detailed answer to the user's question, citing the CodeGraph and LangGraph sources where appropriate."
-}
+Final answer (when you have enough information):
+{{
+  "thought": "Final synthesis reasoning.",
+  "final_answer": "Your direct, clear answer to the user. No meta-commentary, no jargon like 'based on community 3' or 'the AST shows'. Answer as a senior engineer."
+}}
 
-Do not include any text before or after the JSON object. Do not wrap it in markdown code blocks unless they are standard json blocks (i.e. starting with ```json).
+## Critical Rules
+- Do NOT output anything outside the JSON object.
+- Do NOT call a tool more than twice for the same query.
+- Do NOT hallucinate graph data — only report what the tool observations actually return.
+- If a tool returns an error, report it in final_answer; do not retry indefinitely.
+- Keep final_answer concise and professional.
 """
-
-import re
