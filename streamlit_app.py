@@ -12,6 +12,20 @@ import networkx as nx
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = PROJECT_ROOT / "backend"
+
+# Streamlit Cloud cache busting: delete all __pycache__ and stale compiled bytecode (.pyc)
+for root, dirs, files in os.walk(str(BACKEND_DIR)):
+    for d in list(dirs):
+        if d == "__pycache__":
+            shutil.rmtree(os.path.join(root, d), ignore_errors=True)
+            dirs.remove(d)
+    for f in files:
+        if f.endswith(".pyc") or f.endswith(".pyo"):
+            try:
+                os.remove(os.path.join(root, f))
+            except Exception:
+                pass
+
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
