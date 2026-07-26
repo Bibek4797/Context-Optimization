@@ -165,15 +165,32 @@ def select_relevant_communities_cooc_svd(question: str, community_summaries: dic
                     cooc_matrix[w_idx, c_idx] += 1.0
                     
     # 2. Decompose Co-occurrence Matrix using SVD to get dense Word Vectors
-    k_dim = min(V, 50)
-    word_vectors = np.zeros((V, k_dim))
     if V > 1:
         try:
             U, S, Vt = np.linalg.svd(cooc_matrix, full_matrices=False)
+            
+            # Adaptive k selection:
+            if V <= 50:
+                # Small corpus: keep min(V, 50)
+                k_dim = min(V, 50)
+            else:
+                # Medium/Large corpus: use Cumulative Explained Variance Ratio (Elbow Method) for 90% information retention
+                variances = S ** 2
+                total_var = np.sum(variances)
+                if total_var > 0:
+                    cum_var_ratio = np.cumsum(variances) / total_var
+                    # Find index where cumulative variance reaches 90% (0.90)
+                    k_idx = int(np.searchsorted(cum_var_ratio, 0.90)) + 1
+                    k_dim = min(V, max(10, k_idx))
+                else:
+                    k_dim = min(V, 50)
+                    
             word_vectors = U[:, :k_dim] @ np.diag(S[:k_dim])
         except Exception:
+            k_dim = min(V, 50)
             word_vectors = np.eye(V)[:, :k_dim]
     else:
+        k_dim = 1
         word_vectors = np.ones((V, k_dim))
         
     # 3. Compute TF-IDF weights for each word to scale word importance
