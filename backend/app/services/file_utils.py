@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from urllib.parse import urlparse
 
 from app.models.schemas import RepoFile
@@ -109,25 +109,6 @@ EXTENSION_TO_LANGUAGE = {
 }
 
 
-def safe_upload_relative_path(filename: str) -> Path:
-    normalized = filename.replace("\\", "/")
-    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
-        raise ValueError(f"Unsafe upload path detected: {filename}")
-
-    parts = [
-        part
-        for part in PurePosixPath(normalized).parts
-        if part not in {"", "."}
-    ]
-    if not parts or any(part == ".." for part in parts):
-        raise ValueError(f"Unsafe upload path detected: {filename}")
-
-    relative_path = Path(*parts)
-    if relative_path.is_absolute():
-        raise ValueError(f"Unsafe upload path detected: {filename}")
-    return relative_path
-
-
 def iter_code_files(root: Path) -> list[RepoFile]:
     files: list[RepoFile] = []
     for path in sorted(root.rglob("*")):
@@ -167,10 +148,10 @@ def safe_extract_zip(zip_path: Path, destination: Path) -> None:
             if is_ignored(Path(member.filename)):
                 continue
             archive.extract(member, destination)
-    flatten_single_top_level_dir(destination)
+    _flatten_single_top_level_dir(destination)
 
 
-def flatten_single_top_level_dir(destination: Path) -> None:
+def _flatten_single_top_level_dir(destination: Path) -> None:
     children = [child for child in destination.iterdir() if child.name not in {"__MACOSX"}]
     if len(children) != 1 or not children[0].is_dir():
         return
@@ -210,3 +191,4 @@ def zip_dir_to_bytes(dir_path: Path) -> bytes:
                     continue
                 zip_file.write(file_path, arcname=rel_path.as_posix())
     return buf.getvalue()
+
