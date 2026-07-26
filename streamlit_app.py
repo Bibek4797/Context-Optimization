@@ -47,7 +47,6 @@ from app.services.graph_retrieval_service import GraphRetrievalService
 from app.services.graphify_service import GraphifyService
 from app.services.llm.gemini import GeminiProvider
 from app.services.llm.openai_compatible import GroqProvider, OpenRouterProvider
-from app.services.llm.bedrock import BedrockProvider
 from app.services.repo_service import RepoService
 from app.services.storage import LocalStorage
 from app.services.token_service import TokenService
