@@ -126,7 +126,7 @@ def iter_code_files(root: Path) -> list[RepoFile]:
                     path=rel.as_posix(),
                     language=language,
                     size_bytes=path.stat().st_size,
-                    line_count=len(text.splitlines()),
+                    lines=len(text.splitlines()),
                 )
             )
     return files

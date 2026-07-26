@@ -114,7 +114,7 @@ class AnalysisPipeline:
                 total_files += 1
                 if path.suffix in {".py", ".pyi", ".txt", ".md", ".toml", ".yaml", ".yml", ".json"}:
                     total_lines += len(read_text_lossy(path).splitlines())
-        python_lines = sum(file.line_count for file in files)
+        python_lines = sum(file.lines for file in files)
         total_tokens = sum(
             self.token_service.estimate_tokens(read_text_lossy(source_dir / file.path))
             for file in files

@@ -37,9 +37,11 @@ class RepoMetadata(BaseModel):
     name: str
     origin: str
     status: RepoStatus = RepoStatus.pending
-    stats: RepoStats = Field(default_factory=RepoStats)
+    error: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    stats: RepoStats = Field(default_factory=RepoStats)
     created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class RepoFile(BaseModel):

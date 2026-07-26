@@ -65,7 +65,7 @@ class CodeGraphService:
                 label=module_name,
                 file_path=rel_path,
                 line_start=1,
-                line_end=max(1, repo_file.line_count),
+                line_end=max(1, repo_file.lines),
                 source_snippet=module_snippet,
                 metadata={"path": rel_path},
             )
