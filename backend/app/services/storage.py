@@ -43,6 +43,19 @@ class LocalStorage:
         data = self._load_json(self.repo_state_dir(repo_id) / "metadata.json")
         return RepoMetadata.model_validate(data) if data else None
 
+    def list_repos(self) -> list[RepoMetadata]:
+        repos_dir = self.state_dir / "repos"
+        if not repos_dir.exists():
+            return []
+        metas = []
+        for p in repos_dir.iterdir():
+            if p.is_dir():
+                meta = self.load_repo_metadata(p.name)
+                if meta:
+                    metas.append(meta)
+        metas.sort(key=lambda m: getattr(m, "created_at", datetime.now(timezone.utc)), reverse=True)
+        return metas
+
     def save_files(self, repo_id: str, files: list[RepoFile]) -> None:
         self._save_json(self.repo_state_dir(repo_id) / "files.json", [file.model_dump(mode="json") for file in files])
 

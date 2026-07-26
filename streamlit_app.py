@@ -529,6 +529,14 @@ if "unstructured_community_embeddings" not in st.session_state:
 if "unstructured_node_embeddings" not in st.session_state:
     st.session_state["unstructured_node_embeddings"] = {}
 
+# Auto-restore active repository if stored on disk and not yet in session state
+all_saved_repos = storage.list_repos()
+if not st.session_state.get("repo_id") and all_saved_repos:
+    latest_repo = all_saved_repos[0]
+    st.session_state["repo_id"] = latest_repo.repo_id
+    st.session_state["repo_name"] = latest_repo.name
+    st.session_state["uploaded_codebase"] = True
+
 # Render static or last known checklist in sidebar
 def render_sidebar_todo(todo):
     with sidebar_todo_placeholder.container():
@@ -618,17 +626,33 @@ with main_tabs[0]:
                         st.session_state["uploaded_codebase"] = True
                         st.success(f"Successfully built CodeGraph for {len(repo_upload)} uploaded files.")
                     
-                    st.metric("Total Python Files", repo_meta.stats.python_files)
-                    st.metric("Total Python Lines", repo_meta.stats.python_lines)
+                    st.metric("Total Files", repo_meta.stats.total_files)
+                    st.metric("Total Lines", repo_meta.stats.total_lines)
                 except Exception as e:
                     st.error(f"Ingestion failed: {e}")
                     
-        # Check active repository
-        active_repo_id = st.session_state.get("repo_id")
-        if active_repo_id:
-            meta = storage.load_repo_metadata(active_repo_id)
-            if meta:
-                st.info(f"Active repository: **{meta.name}** (ID: {active_repo_id})")
+        # Check active & stored repositories
+        all_repos = storage.list_repos()
+        if all_repos:
+            repo_options = {f"{r.name} ({r.stats.total_files} files)": r.repo_id for r in all_repos}
+            current_id = st.session_state.get("repo_id", all_repos[0].repo_id)
+            current_idx = list(repo_options.values()).index(current_id) if current_id in repo_options.values() else 0
+            
+            selected_label = st.selectbox(
+                "📂 Active Indexed Codebase",
+                options=list(repo_options.keys()),
+                index=current_idx,
+                key="active_repo_selector_ui",
+                help="Select an existing indexed codebase to visualize or query."
+            )
+            selected_id = repo_options[selected_label]
+            if selected_id != st.session_state.get("repo_id"):
+                st.session_state["repo_id"] = selected_id
+                meta = storage.load_repo_metadata(selected_id)
+                if meta:
+                    st.session_state["repo_name"] = meta.name
+                    st.session_state["uploaded_codebase"] = True
+                st.rerun()
                 
     with col2:
         pdf_uploads = st.file_uploader(
