@@ -419,12 +419,17 @@ st.sidebar.subheader("⚙️ Graph Engine & Retrieval Parameters")
 # 1. Codebase Graph System
 graph_system = st.sidebar.selectbox(
     "Codebase Graph System",
-    ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)"],
-    index=0 if st.session_state.get("harness_source_selection") != "graphify" else 1,
+    ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)", "Hybrid Codebase (CodeGraph + Graphify)"],
+    index=2 if st.session_state.get("harness_source_selection") == "hybrid" else (0 if st.session_state.get("harness_source_selection") != "graphify" else 1),
     key="sidebar_graph_system_select",
-    help="Select whether query context is extracted from CodeGraph (AST nodes) or Graphify (architecture graph)."
+    help="Select whether query context is extracted from CodeGraph, Graphify, or both."
 )
-st.session_state["harness_source_selection"] = "graphify" if "Graphify" in graph_system else "codegraph"
+if "Hybrid" in graph_system:
+    st.session_state["harness_source_selection"] = "hybrid"
+elif "Graphify" in graph_system:
+    st.session_state["harness_source_selection"] = "graphify"
+else:
+    st.session_state["harness_source_selection"] = "codegraph"
 
 # 2. Retrieval Engine
 retrieval_engine = st.sidebar.selectbox(
@@ -656,7 +661,30 @@ with main_tabs[0]:
                 except Exception as e:
                     st.error(f"❌ Ingestion failed: {e}")
                     
-
+        active_id = st.session_state.get("repo_id")
+        if active_id:
+            try:
+                import io, zipfile
+                def get_repo_zip(repo_id: str) -> bytes:
+                    src_dir = storage.repo_source_dir(repo_id)
+                    buf = io.BytesIO()
+                    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                        for p in src_dir.rglob("*"):
+                            if p.is_file() and not p.name.endswith(".bak"):
+                                z.write(p, p.relative_to(src_dir))
+                    return buf.getvalue()
+                
+                zip_data = get_repo_zip(active_id)
+                st.download_button(
+                    label="⬇️ Download Corrected Codebase (ZIP)",
+                    data=zip_data,
+                    file_name=f"{st.session_state.get('repo_name', 'codebase')}_corrected.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    help="Download the entire codebase containing applied fixes and patches."
+                )
+            except Exception as e:
+                st.warning(f"Could not build download zip: {e}")
                 
     with col2:
         pdf_uploads = st.file_uploader(
@@ -833,44 +861,7 @@ with main_tabs[1]:
 with main_tabs[2]:
     st.subheader("💬 stateless Master Loop QA")
     
-    # 🔍 Retrieval Inspector (Graph Context & Prompts)
-    retrieval_hist = st.session_state.get("retrieval_history", [])
-    with st.expander("🔍 Retrieval Inspector (Graph Context & Prompts)", expanded=True if retrieval_hist else False):
-        if not retrieval_hist:
-            st.info("No queries executed yet. Submit a query in chat below to inspect the exact retrieved graph subgraphs, community summaries, and prompt context.")
-        else:
-            if len(retrieval_hist) == 1:
-                selected_idx = 0
-            else:
-                options = [f"[{h['timestamp']}] {h['type']}: {h['query'][:50]}..." for h in retrieval_hist]
-                selected_opt = st.selectbox("Select query record to inspect", options, index=0)
-                selected_idx = options.index(selected_opt)
 
-            latest = retrieval_hist[selected_idx]
-            st.markdown(f"**Inspecting Query**: `{latest['query']}` (Type: `{latest['type']}` at {latest.get('timestamp', 'N/A')})")
-            
-            if "LangGraph" in latest.get("type", ""):
-                st.markdown("### 🧩 Retrieved Louvain Communities & Partial Answers")
-                per_comm = latest.get("per_comm_details", [])
-                if not per_comm:
-                    st.warning(latest.get("merged_context_prompt", "No communities retrieved."))
-                else:
-                    for item in per_comm:
-                        st.markdown(f"#### 🌐 Community ID: {item.get('cid', 'N/A')} (Score: {item.get('score', 0.0):.3f})")
-                        st.write(f"**Anchors**: {item.get('anchors', [])}")
-                        st.write(f"**Community Summary**:")
-                        st.info(item.get("summary", ""))
-                        st.write(f"**Intermediate Partial Answer**:")
-                        st.success(item.get("partial_answer", ""))
-                
-                st.markdown("### 📝 Merged Prompt Context (Sent to LLM)")
-                st.code(latest.get("merged_context_prompt", "No context prompt available."), language="text")
-                
-            else:
-                st.markdown("### 🌲 Retrieved AST Codebase Subgraph & Definitions")
-                st.code(latest.get("context_retrieved", "No explicit source context retrieved."), language="python")
-                st.write("**Synthesized Answer / Status**:")
-                st.success(latest.get("answer", "No answer recorded."))
     
     # Render chat history
     for msg_idx, msg in enumerate(st.session_state["chat_history"]):

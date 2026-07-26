@@ -270,6 +270,37 @@ class GraphRetrievalService:
         if codegraph is None:
             raise ValueError("CodeGraph output not found for repo.")
 
+        if source_selection == "hybrid":
+            res_cg = self.build_context(
+                repo_id=repo_id, query=query, max_nodes=max_nodes,
+                source_selection="codegraph", retrieval_method=retrieval_method,
+                graphify_mode=graphify_mode, max_anchors=max_anchors, max_neighbors=max_neighbors
+            )
+            if graphify:
+                res_gf = self.build_context(
+                    repo_id=repo_id, query=query, max_nodes=max_nodes,
+                    source_selection="graphify", retrieval_method=retrieval_method,
+                    graphify_mode=graphify_mode, max_anchors=max_anchors, max_neighbors=max_neighbors
+                )
+                merged_nodes = res_cg.selected_nodes + [n for n in res_gf.selected_nodes if n.node_id not in {x.node_id for x in res_cg.selected_nodes}]
+                merged_edges = res_cg.selected_edges + [e for e in res_gf.selected_edges if (e.source_node, e.target_node) not in {(x.source_node, x.target_node) for x in res_cg.selected_edges}]
+                merged_snippets = res_cg.snippets + [s for s in res_gf.snippets if s.file_path not in {x.file_path for x in res_cg.snippets}]
+                
+                merged_context = (
+                    "=== CODEGRAPH (AST-level details) ===\n" + res_cg.context + "\n\n"
+                    "=== GRAPHIFY (High-level Architecture) ===\n" + res_gf.context
+                )
+                return GraphRetrievalResult(
+                    context=merged_context,
+                    snippets=merged_snippets,
+                    selected_nodes=merged_nodes,
+                    selected_edges=merged_edges,
+                    token_measurement=res_cg.token_measurement,
+                    retrieval_strategy=f"Hybrid Codebase: CodeGraph + Graphify ({retrieval_method.upper()})"
+                )
+            else:
+                return res_cg
+
         # ── Internal Graph Retrieval ──
         # Uses the native query engines of CodeGraph / Graphify (CLI first, Python fallback)
         if retrieval_method == "internal":
