@@ -82,13 +82,24 @@ def select_relevant_communities_tfidf_lsa(question: str, community_summaries: di
             query_vector[word_to_idx[word]] = tf * idf[word]
             
     # Apply SVD (LSA) if we have enough dimensions/documents
-    k_components = 5
-    if N > 2 and len(vocab) > k_components:
+    if N > 2 and len(vocab) > 2:
         try:
             # SVD: doc_vectors is (N, vocab_size)
-            # Keep top k_components
             U, S, Vt = np.linalg.svd(doc_vectors, full_matrices=False)
-            k = min(N, len(vocab), k_components)
+            max_k = min(N, len(vocab))
+            if max_k <= 50:
+                k = min(max_k, 5)
+            else:
+                # Cumulative Explained Variance Ratio (Elbow Method) for 90% information retention
+                variances = S ** 2
+                total_var = np.sum(variances)
+                if total_var > 0:
+                    cum_var_ratio = np.cumsum(variances) / total_var
+                    k_idx = int(np.searchsorted(cum_var_ratio, 0.90)) + 1
+                    k = min(max_k, max(5, k_idx))
+                else:
+                    k = min(max_k, 5)
+                    
             U_k = U[:, :k]
             S_k = np.diag(S[:k])
             Vt_k = Vt[:k, :]
@@ -455,23 +466,6 @@ def run_full_query_pipeline(question: str, G: nx.Graph, community_summaries: dic
         print(f"[Query Error] merge_answers failed: {e}")
         final_ans = f"Sorry, could not generate the final answer due to an API error: {e}. Please check your API key, billing status, or model availability."
     
-    validation_results = {}
-    try:
-        gt_parts = []
-        for cid, ctx in per_community_contexts.items():
-            summary_text = community_summaries.get(cid, "")
-            local_context_text = ctx.get("filtered_local_context", "")
-            gt_parts.append(
-                f"Community {cid} Summary:\n{summary_text}\n\n"
-                f"Community {cid} Subgraph Context:\n{local_context_text}"
-            )
-        ground_truth = "\n\n".join(gt_parts)
-        from app.services.unstructured.validator import FaithfulnessValidator
-        validator = FaithfulnessValidator()
-        validation_results = validator.evaluate(ground_truth, final_ans)
-    except Exception as e:
-        print(f"[Validation Error] Faithfulness validation failed: {e}")
-        
     return {
         "final_answer": final_ans,
         "ranked_communities": ranked_comms,
@@ -479,5 +473,5 @@ def run_full_query_pipeline(question: str, G: nx.Graph, community_summaries: dic
         "extracted_entities": entities,
         "updated_node_embeddings_cache": node_embeddings_cache,
         "combined_rules": [],
-        "validation_results": validation_results
+        "validation_results": {}
     }
