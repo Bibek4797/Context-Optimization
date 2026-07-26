@@ -22,7 +22,7 @@ if "app" in sys.modules:
     if not app_file or "backend" not in str(app_file):
         del sys.modules["app"]
 
-from app.models.schemas import GraphDocument, QueryRecord, RepoMetadata, TreeNode
+from app.models.schemas import GraphDocument, QueryRecord, RepoMetadata, TreeNode, RepoStatus
 from app.services.analysis_pipeline import AnalysisPipeline
 from app.services.chat_service import ChatService
 from app.services.codegraph_service import CodeGraphService
