@@ -384,7 +384,8 @@ class AgentHarness:
             else:
                 computed_pref = "auto"
 
-        system_prompt = self._build_system_prompt(scenario, computed_pref)
+        rectify = st.session_state.get("harness_rectify_mode", False)
+        system_prompt = self._build_system_prompt(scenario, computed_pref, rectify=rectify)
 
         # ── PAO Loop ─────────────────────────────────
         history: List[Dict] = []
@@ -555,7 +556,7 @@ class AgentHarness:
     # ──────────────────────────────────────────────
     # Dynamic System Prompt (scenario-aware)
     # ──────────────────────────────────────────────
-    def _build_system_prompt(self, scenario: str, source_preference: str) -> str:
+    def _build_system_prompt(self, scenario: str, source_preference: str, rectify: bool = False) -> str:
         """
         Build the LLM system prompt based on exactly what assets are available.
         This prevents the LLM from hallucinating tool calls for missing assets.
@@ -629,13 +630,22 @@ class AgentHarness:
             )
             strategy = "Merge insights from both the codebase CodeGraph and the PDF LangGraph to provide a comprehensive answer."
 
+        rectify_instructions = ""
+        if rectify:
+            rectify_instructions = (
+                "\n\n## Code Fix Preservation (Rectify Mode)\n"
+                "If any tool (e.g. `query_codegraph`) returns a `<code_fix>` XML block in its observation, "
+                "you MUST copy and include that exact `<code_fix>...</code_fix>` XML structure "
+                "verbatim in your `final_answer`. Do NOT modify, strip, or alter the XML tags."
+            )
+
         return f"""You are the central Agentic Harness Planner for a Context Optimization Engine.
 Your goal is to answer the user's query by querying the correct graph knowledge base(s).
 
 {tools_section}
 
 ## Answer Strategy
-{strategy}
+{strategy}{rectify_instructions}
 
 ## Output Format
 Every response must be a single valid JSON object — one of:
