@@ -371,11 +371,15 @@ class GraphRetrievalService:
                     graphify_cli = str(candidate)
                     break
             if not graphify_cli:
-                graphify_cli = "graphify" # fallback
+                graphify_cli = "graphify"
+
+        cmd = [graphify_cli, "query", query, "--budget", str(target_budget)]
+        if str(graphify_mode).lower() == "dfs":
+            cmd.append("--dfs")
 
         try:
             proc = subprocess.run(
-                [graphify_cli, "query", query, "--mode", graphify_mode, "--budget", str(target_budget)],
+                cmd,
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
@@ -446,7 +450,13 @@ class GraphRetrievalService:
         script = (
             "(async () => {\n"
             "  try {\n"
-            "    const { CodeGraph } = require('@colbymchenry/codegraph');\n"
+            "    let CodeGraph;\n"
+            "    try {\n"
+            "      CodeGraph = require('@colbymchenry/codegraph').CodeGraph;\n"
+            "    } catch (_) {\n"
+            "      const mainRoot = process.env.MAIN_PROJECT_ROOT || process.cwd();\n"
+            "      CodeGraph = require(require.resolve('@colbymchenry/codegraph', { paths: [mainRoot, process.cwd()] })).CodeGraph;\n"
+            "    }\n"
             "    const projectRoot = process.cwd();\n"
             "    let cg;\n"
             "    if (CodeGraph.isInitialized(projectRoot)) {\n"
@@ -457,7 +467,7 @@ class GraphRetrievalService:
             "    if (cg.indexAll) await cg.indexAll();\n"
             "    const query = process.argv[2] || '';\n"
             f"    const ctx = await cg.buildContext(query, {{ maxNodes: {max_nodes}, includeCode: true, format: 'markdown' }});\n"
-            "    console.log(JSON.stringify({ context: ctx }));\n"
+            "    console.log(JSON.stringify({{ context: ctx }}));\n"
             "    if (cg.close) await cg.close();\n"
             "  } catch (e) {\n"
             "    console.error(e && e.stack ? e.stack : e);\n"
@@ -469,10 +479,15 @@ class GraphRetrievalService:
         script_path = repo_root / ".codegraph_query.js"
         script_path.write_text(script, encoding="utf-8")
         
+        import os
+        env = dict(os.environ)
+        env["MAIN_PROJECT_ROOT"] = str(Path.cwd())
+        
         try:
             proc = subprocess.run(
                 [node_path, "--experimental-sqlite", str(script_path), query],
                 cwd=str(repo_root),
+                env=env,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
