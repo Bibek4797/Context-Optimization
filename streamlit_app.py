@@ -346,9 +346,9 @@ elif provider == "OpenRouter":
         [
             "openrouter/free",
             "meta-llama/llama-3.3-70b-instruct",
-            "google/gemini-2.0-flash-lite-preview-v1:free",
-            "deepseek/deepseek-r1:free",
-            "qwen/qwen-2.5-72b-instruct:free"
+            "google/gemma-4-31b-it:free",
+            "openai/gpt-oss-20b:free",
+            "poolside/laguna-s-2.1:free"
         ]
     )
 
