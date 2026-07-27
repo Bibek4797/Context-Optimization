@@ -629,7 +629,6 @@ with main_tabs[0]:
                         st.session_state["repo_name"] = repo_meta.name
                         st.session_state["uploaded_codebase"] = True
                         st.session_state["fix_applied"] = False
-                        st.success(f"✅ Successfully built CodeGraph for repository: {repo_meta.name}")
                         st.metric("Total Files", repo_meta.stats.total_files)
                         st.metric("Total Lines", repo_meta.stats.total_lines)
                 except Exception as e:
