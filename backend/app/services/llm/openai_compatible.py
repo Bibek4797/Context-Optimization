@@ -8,8 +8,7 @@ from app.services.token_service import TokenService
 
 class GroqProvider(LLMProvider):
     def __init__(self, api_key: str | None, model: str) -> None:
-        import os
-        self.api_key = api_key or os.environ.get("GROQ_API_KEY")
+        self.api_key = api_key
         self.model = model
         self.provider = "groq"
         self._token_service = TokenService()
@@ -105,8 +104,7 @@ class GroqProvider(LLMProvider):
 
 class OpenRouterProvider(LLMProvider):
     def __init__(self, api_key: str | None, model: str) -> None:
-        import os
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        self.api_key = api_key
         self.model = model
         self.provider = "openrouter"
         self._token_service = TokenService()
