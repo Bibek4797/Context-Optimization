@@ -370,9 +370,9 @@ elif provider == "OpenRouter":
         ]
     )
 
-default_key = os.environ.get(f"{provider.upper()}_API_KEY", "")
+default_key = ""
 session_key_name = f"{provider.lower()}_api_key_override"
-if session_key_name not in st.session_state or not st.session_state[session_key_name]:
+if session_key_name not in st.session_state:
     st.session_state[session_key_name] = default_key
     
 api_key = st.sidebar.text_input(

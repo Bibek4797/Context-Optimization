@@ -8,7 +8,8 @@ from app.services.token_service import TokenService
 
 class GroqProvider(LLMProvider):
     def __init__(self, api_key: str | None, model: str) -> None:
-        self.api_key = api_key
+        import os
+        self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         self.model = model
         self.provider = "groq"
         self._token_service = TokenService()

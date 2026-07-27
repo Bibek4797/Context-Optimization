@@ -7,7 +7,8 @@ from app.services.token_service import TokenService
 
 class GeminiProvider(LLMProvider):
     def __init__(self, api_key: str | None, model: str) -> None:
-        self.api_key = api_key
+        import os
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self.model = model
         self.provider = "gemini"
         self._client = None
