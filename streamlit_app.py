@@ -705,7 +705,7 @@ with main_tabs[0]:
             st.session_state["last_uploaded_pdf_sig"] = None
             st.rerun()
                 
-        # Action Buttons for LangGraph
+        # Action Buttons for Knowledge Graph
         all_docs = st.session_state.get("unstructured_docs", [])
         if all_docs:
             st.markdown("### Document Catalog")
@@ -716,12 +716,12 @@ with main_tabs[0]:
             
             c1, c2, c3 = st.columns(3)
             with c1:
-                if st.button("🕸️ Build LangGraph", use_container_width=True):
+                if st.button("🕸️ Build Knowledge Graph", use_container_width=True):
                     with st.spinner("Extracting entities & relations with LLM..."):
                         try:
                             G = build_graph_from_documents(all_docs)
                             st.session_state["unstructured_graph"] = G
-                            st.success("LangGraph built!")
+                            st.success("Knowledge Graph built!")
                         except Exception as e:
                             st.error(f"Failed: {e}")
             with c2:
@@ -845,19 +845,19 @@ with main_tabs[1]:
                     
     st.markdown("---")
 
-    # ── Section 2: LangGraph Unstructured Community Network (Full Width) ──
-    st.markdown("### 🕸️ LangGraph Unstructured Community Network")
+    # ── Section 2: Document Knowledge Graph (Louvain Communities) ──
+    st.markdown("### 🕸️ Document Knowledge Graph (Louvain Communities)")
     G_pdf = st.session_state.get("unstructured_graph")
     if G_pdf is None:
-        st.warning("Upload documents and build the LangGraph in Tab 1 to visualize the Network.")
+        st.warning("Upload documents and build the Knowledge Graph in Tab 1 to visualize the Network.")
     else:
-        with st.spinner("Compiling LangGraph visualization..."):
+        with st.spinner("Compiling Knowledge Graph visualization..."):
             try:
                 pdf_html = graph_to_pyvis(G_pdf, height="650px")
                 import streamlit.components.v1 as components
                 components.html(pdf_html, height=670, scrolling=False)
             except Exception as e:
-                st.error(f"Could not render LangGraph: {e}")
+                st.error(f"Could not render Knowledge Graph: {e}")
 
 with main_tabs[2]:
     st.subheader("💬 stateless Master Loop QA")

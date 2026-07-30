@@ -213,14 +213,13 @@ class RectificationService:
                     best_idx = -1
                     best_len = len(target_lines)
                     
-                    # Try sliding windows of size len(target_lines) +/- 2
-                    for window_len in range(max(1, len(target_lines) - 2), len(target_lines) + 3):
-                        if window_len > len(content_lines):
-                            continue
+                    # Force window length to match exactly to prevent partial-block replacements
+                    window_len = len(target_lines)
+                    if window_len <= len(content_lines):
                         for i in range(len(content_lines) - window_len + 1):
                             window_str = "\n".join(content_lines[i : i + window_len])
                             score = difflib.SequenceMatcher(None, target_str, window_str).ratio()
-                            if score > best_score and score >= 0.65:
+                            if score > best_score and score >= 0.85:
                                 best_score = score
                                 best_idx = i
                                 best_len = window_len

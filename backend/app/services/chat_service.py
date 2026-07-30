@@ -230,13 +230,15 @@ class ChatService:
                 "<code_fix>\n"
                 "  <filepath>relative/path/to/file.py</filepath>\n"
                 "  <original_code>\n"
-                "// Exact block of old code to replace (must match precisely including spacing)\n"
+                "// Exact block of old code to replace (must match precisely, character-for-character)\n"
                 "  </original_code>\n"
                 "  <replacement_code>\n"
                 "// Exact block of new code to insert\n"
                 "  </replacement_code>\n"
                 "</code_fix>\n"
-                "Make sure that the <original_code> block you target matches the codebase content exactly, character-for-character."
+                "CRITICAL REQUIREMENTS FOR THE CODE FIX:\n"
+                "1. The <original_code> block MUST be a single contiguous block of code copied EXACTLY from the file. Do NOT skip any lines (such as docstrings, comments, or other code lines in between) or merge non-contiguous lines. If you need to replace lines inside a function, either target the specific statement to replace, or copy the entire function including its docstring and comments character-for-character.\n"
+                "2. Ensure all indentation and whitespace match the file exactly."
             )
         return (
             "You are an expert repository software architect. Use the selected CodeGraph and Graphify context to answer. "
