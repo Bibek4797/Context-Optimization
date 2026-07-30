@@ -604,35 +604,53 @@ with main_tabs[0]:
             key="codebase_uploader"
         )
         if repo_upload:
-            with st.spinner("Extracting and building Tree-sitter CodeGraph..."):
-                try:
-                    # Check if there is a zip in the uploaded files
-                    zip_files = [f for f in repo_upload if f.name.lower().endswith(".zip")]
-                    if zip_files:
-                        repo_meta = ingest_uploaded_zip(zip_files[0])
-                    else:
-                        repo_meta = ingest_uploaded_files(repo_upload)
-                    
-                    if repo_meta.status == RepoStatus.failed or repo_meta.status.value == "failed":
-                        st.error(f"❌ Ingestion failed: {repo_meta.error}")
-                        st.session_state["uploaded_codebase"] = False
+            current_files_sig = [(f.name, f.size) for f in repo_upload]
+            last_sig = st.session_state.get("last_uploaded_codebase_sig")
+            if current_files_sig != last_sig:
+                st.session_state["last_uploaded_codebase_sig"] = current_files_sig
+                with st.spinner("Extracting and building Tree-sitter CodeGraph..."):
+                    try:
+                        # Check if there is a zip in the uploaded files
+                        zip_files = [f for f in repo_upload if f.name.lower().endswith(".zip")]
+                        if zip_files:
+                            repo_meta = ingest_uploaded_zip(zip_files[0])
+                        else:
+                            repo_meta = ingest_uploaded_files(repo_upload)
                         
-                        # Display diagnostics logs for why it failed
-                        logs = storage.load_logs(repo_meta.repo_id, limit=30)
-                        if logs:
-                            with st.expander("📋 Ingestion Logs & Diagnostics", expanded=True):
-                                for log in logs:
-                                    level_emoji = "🔴" if log.get("level") == "error" else "🟡" if log.get("level") == "warning" else "🔵"
-                                    st.write(f"{level_emoji} **[{log.get('stage', 'pipeline').upper()}]** {log.get('message')}")
-                    else:
-                        st.session_state.repo_id = repo_meta.repo_id
-                        st.session_state["repo_name"] = repo_meta.name
-                        st.session_state["uploaded_codebase"] = True
-                        st.session_state["fix_applied"] = False
-                        st.metric("Total Files", repo_meta.stats.total_files)
-                        st.metric("Total Lines", repo_meta.stats.total_lines)
-                except Exception as e:
-                    st.error(f"❌ Ingestion failed: {e}")
+                        if repo_meta.status == RepoStatus.failed or repo_meta.status.value == "failed":
+                            st.error(f"❌ Ingestion failed: {repo_meta.error}")
+                            st.session_state["uploaded_codebase"] = False
+                            
+                            # Display diagnostics logs for why it failed
+                            logs = storage.load_logs(repo_meta.repo_id, limit=30)
+                            if logs:
+                                with st.expander("📋 Ingestion Logs & Diagnostics", expanded=True):
+                                    for log in logs:
+                                        level_emoji = "🔴" if log.get("level") == "error" else "🟡" if log.get("level") == "warning" else "🔵"
+                                        st.write(f"{level_emoji} **[{log.get('stage', 'pipeline').upper()}]** {log.get('message')}")
+                        else:
+                            st.session_state.repo_id = repo_meta.repo_id
+                            st.session_state["repo_name"] = repo_meta.name
+                            st.session_state["uploaded_codebase"] = True
+                            st.session_state["fix_applied"] = False
+                            # Rerun once to make sure the metrics and other tabs update cleanly
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Ingestion failed: {e}")
+        elif st.session_state.get("uploaded_codebase"):
+            st.session_state["uploaded_codebase"] = False
+            st.session_state["repo_id"] = None
+            st.session_state["repo_name"] = None
+            st.session_state["last_uploaded_codebase_sig"] = None
+            st.session_state["fix_applied"] = False
+            st.rerun()
+
+        # Display metrics if already uploaded
+        if st.session_state.get("uploaded_codebase") and st.session_state.get("repo_id"):
+            repo_meta = storage.load_repo_metadata(st.session_state.repo_id)
+            if repo_meta and repo_meta.stats:
+                st.metric("Total Files", repo_meta.stats.total_files)
+                st.metric("Total Lines", repo_meta.stats.total_lines)
                     
         active_id = st.session_state.get("repo_id")
         if active_id and st.session_state.get("fix_applied"):
@@ -667,15 +685,25 @@ with main_tabs[0]:
             key="pdf_uploader"
         )
         if pdf_uploads:
-            with st.spinner("Chunking files..."):
-                docs = process_uploaded_files(pdf_uploads)
-                current_docs = st.session_state.get("unstructured_docs", [])
-                for d in docs:
-                    if not any(cd["name"] == d["name"] for cd in current_docs):
-                        current_docs.append(d)
-                st.session_state["unstructured_docs"] = current_docs
-                st.session_state["uploaded_pdf"] = True
-                st.success(f"Ingested {len(docs)} document(s).")
+            current_pdf_sig = [(f.name, f.size) for f in pdf_uploads]
+            last_pdf_sig = st.session_state.get("last_uploaded_pdf_sig")
+            if current_pdf_sig != last_pdf_sig:
+                st.session_state["last_uploaded_pdf_sig"] = current_pdf_sig
+                with st.spinner("Chunking files..."):
+                    docs = process_uploaded_files(pdf_uploads)
+                    current_docs = st.session_state.get("unstructured_docs", [])
+                    for d in docs:
+                        if not any(cd["name"] == d["name"] for cd in current_docs):
+                            current_docs.append(d)
+                    st.session_state["unstructured_docs"] = current_docs
+                    st.session_state["uploaded_pdf"] = True
+                    st.success(f"Ingested {len(docs)} document(s).")
+        elif st.session_state.get("uploaded_pdf"):
+            st.session_state["uploaded_pdf"] = False
+            st.session_state["unstructured_docs"] = []
+            st.session_state["unstructured_graph"] = None
+            st.session_state["last_uploaded_pdf_sig"] = None
+            st.rerun()
                 
         # Action Buttons for LangGraph
         all_docs = st.session_state.get("unstructured_docs", [])
