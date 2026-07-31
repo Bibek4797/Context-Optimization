@@ -6,8 +6,6 @@ import requests
 _is_configured = False
 _last_call_time = 0.0
 
-def init_gemini(api_key: str | None) -> None:
-    pass
 
 def is_configured() -> bool:
     provider = st.session_state.get("llm_provider", "Gemini")
@@ -165,8 +163,8 @@ def generate_text(prompt: str, json_mode: bool = False, retries: int = 5, backof
                     continue
                 print(f"[LLM Error] Amazon Bedrock invocation failed: {e}")
                 raise e
-                
-    return ""
+
+    raise ValueError(f"Unsupported LLM provider: '{provider}'. Please select a valid provider in the sidebar.")
 
 def embed_texts(texts: list[str], retries: int = 5, backoff: float = 3.0) -> list[list[float]]:
     # Embeddings are only supported on Gemini. If using Groq/OpenRouter,

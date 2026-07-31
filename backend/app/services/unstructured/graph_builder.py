@@ -4,7 +4,7 @@ import networkx as nx
 import streamlit as st
 from app.services.unstructured import llm_client
 
-def parse_json_from_llm(response_text: str) -> dict:
+def parse_json_from_llm(response_text: str) -> dict | list:
     cleaned = response_text.strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\n", "", cleaned)
@@ -14,6 +14,7 @@ def parse_json_from_llm(response_text: str) -> dict:
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
+        # Try to extract a JSON object {...}
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start != -1 and end != -1:
@@ -21,7 +22,16 @@ def parse_json_from_llm(response_text: str) -> dict:
                 return json.loads(cleaned[start:end+1])
             except json.JSONDecodeError:
                 pass
+        # Try to extract a JSON array [...]
+        start = cleaned.find("[")
+        end = cleaned.rfind("]")
+        if start != -1 and end != -1:
+            try:
+                return json.loads(cleaned[start:end+1])
+            except json.JSONDecodeError:
+                pass
         raise ValueError("Could not decode JSON from response.")
+
 
 def extract_graph_from_text(text: str) -> dict:
     if not llm_client.is_configured():

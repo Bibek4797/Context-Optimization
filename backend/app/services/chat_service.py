@@ -138,7 +138,12 @@ class ChatService:
         # Compute Whole Codebase Baseline
         try:
             repo_tokens = self._get_total_repo_tokens(repo_id)
-            query_prompt = self._standard_prompt(query, "[concatenated_files_placeholder]")
+            query_prompt = (
+                "You are an expert repository software architect. "
+                "Answer the following question based on the entire codebase provided.\n\n"
+                f"Question:\n{query}\n\n"
+                "Codebase:\n[concatenated_files_placeholder]"
+            )
             query_tokens = self._prompt_measurement(query_prompt).tokens
             baseline_total = repo_tokens + query_tokens
         except Exception:

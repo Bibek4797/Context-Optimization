@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 from app.services.storage import LocalStorage
+from app.services.file_utils import read_text_lossy
 
 
 def clean_xml_code_block(code: str) -> str:

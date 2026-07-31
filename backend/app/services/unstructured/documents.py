@@ -19,6 +19,9 @@ def extract_text_from_file(uploaded_file) -> str:
     uploaded_file.seek(0)
     
     if file_type == "pdf":
+        if pypdf is None and PyPDF2 is None:
+            st.error("No PDF reading library is available. Please install 'pypdf' or 'PyPDF2' (pip install pypdf).")
+            return ""
         try:
             reader = pypdf.PdfReader(uploaded_file)
             for page in reader.pages:
