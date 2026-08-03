@@ -29,10 +29,9 @@ for root, dirs, files in os.walk(str(BACKEND_DIR)):
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-# Force reload of all backend modules to prevent Streamlit Cloud from using stale cached versions in memory,
-# and resolve any clashing 'app' naming conflict with Streamlit Cloud's internal runner.
+# Safely clear local app module cache without touching Streamlit internal runner modules
 for mod_name in list(sys.modules.keys()):
-    if "app" in mod_name or "backend" in mod_name or "schemas" in mod_name:
+    if (mod_name.startswith("app.") or mod_name == "app" or mod_name.startswith("backend.")) and not mod_name.startswith("streamlit"):
         try:
             del sys.modules[mod_name]
         except Exception:
@@ -306,7 +305,15 @@ def get_secret(name: str, default: str | None = None) -> str | None:
 @st.cache_resource
 def services():
     data_dir_value = get_secret("CONTEXT_ENGINE_DATA_DIR") or os.getenv("CONTEXT_ENGINE_DATA_DIR")
-    data_dir = Path(data_dir_value) if data_dir_value else PROJECT_ROOT / "data"
+    if data_dir_value:
+        data_dir = Path(data_dir_value)
+    else:
+        # Fall back to /tmp/context_engine_data if running on Streamlit Cloud (read-only mount)
+        if Path("/mount/src").exists() or os.getenv("STREAMLIT_SERVER_PORT"):
+            data_dir = Path("/tmp/context_engine_data")
+        else:
+            data_dir = PROJECT_ROOT / "data"
+
     if not data_dir.is_absolute():
         data_dir = PROJECT_ROOT / data_dir
 
