@@ -16,5 +16,4 @@ google-generativeai
 pyvis
 pypdf
 thefuzz
-python-Levenshtein
-scikit-learn
+

@@ -179,55 +179,79 @@ class RectificationService:
                 except Exception as e:
                     return {"status": "failed", "error": f"Failed to patch Jupyter notebook JSON: {e}"}
 
-            # Standard text file parsing (original logic)
-            # Read existing file content and normalize carriage returns to standard Unix newlines
+            # Standard text file parsing (enhanced matching logic)
             content = abs_path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
             
             # Normalize target and replacement newlines, and clean/strip markdown fences properly
-            target_str = clean_xml_code_block(original_code).replace("\r\n", "\n")
-            target_replacement = clean_xml_code_block(replacement_code).replace("\r\n", "\n")
+            target_str = clean_xml_code_block(original_code).replace("\r\n", "\n").strip()
+            target_replacement = clean_xml_code_block(replacement_code).replace("\r\n", "\n").strip()
             
             new_content = None
             
-            # Layer A: Exact match
-            if target_str in content:
+            # Layer A: Direct exact match
+            if target_str and target_str in content:
                 new_content = content.replace(target_str, target_replacement, 1)
-            else:
-                # Layer B: Find target block ignoring leading/trailing whitespaces but preserving line structure
-                target_lines = [l.strip() for l in target_str.splitlines()]
+            elif target_str:
                 content_lines = content.splitlines()
+                target_lines = [l for l in target_str.splitlines() if l.strip()]
                 
                 match_idx = -1
-                target_lines_len = len(target_lines)
+                target_lines_len = len(target_str.splitlines())
                 
-                # Rolling window search for the block
-                for i in range(len(content_lines) - len(target_lines) + 1):
-                    window = [content_lines[i + j].strip() for j in range(len(target_lines))]
-                    if window == target_lines:
-                        match_idx = i
-                        break
-                        
-                # Layer E: Fuzzy Sequence Matching (if exact line matching fails)
+                # Layer B: Non-empty line sequence matching
+                if target_lines and content_lines:
+                    # Strip whitespace from non-empty lines for comparing
+                    target_stripped = [l.strip() for l in target_str.splitlines()]
+                    window_len = len(target_stripped)
+                    
+                    for i in range(len(content_lines) - window_len + 1):
+                        window = [content_lines[i + j].strip() for j in range(window_len)]
+                        if window == target_stripped:
+                            match_idx = i
+                            target_lines_len = window_len
+                            break
+                            
+                # Layer C: Fuzzy Sequence Matching (threshold 0.65+)
                 if match_idx == -1 and target_lines:
                     import difflib
                     best_score = 0.0
                     best_idx = -1
-                    best_len = len(target_lines)
+                    best_len = target_lines_len
                     
-                    # Force window length to match exactly to prevent partial-block replacements
-                    window_len = len(target_lines)
-                    if window_len <= len(content_lines):
-                        for i in range(len(content_lines) - window_len + 1):
-                            window_str = "\n".join(content_lines[i : i + window_len])
-                            score = difflib.SequenceMatcher(None, target_str, window_str).ratio()
-                            if score > best_score and score >= 0.85:
-                                best_score = score
-                                best_idx = i
-                                best_len = window_len
-                                
+                    for w_len in (target_lines_len, max(1, target_lines_len - 1), target_lines_len + 1):
+                        if w_len <= len(content_lines):
+                            for i in range(len(content_lines) - w_len + 1):
+                                window_str = "\n".join(content_lines[i : i + w_len])
+                                score = difflib.SequenceMatcher(None, target_str, window_str).ratio()
+                                if score > best_score and score >= 0.65:
+                                    best_score = score
+                                    best_idx = i
+                                    best_len = w_len
+                                    
                     if best_idx != -1:
                         match_idx = best_idx
                         target_lines_len = best_len
+
+                # Layer D: Function/Class Header Fallback Matching
+                if match_idx == -1 and target_lines:
+                    first_non_empty = target_lines[0].strip()
+                    if first_non_empty.startswith("def ") or first_non_empty.startswith("class ") or first_non_empty.startswith("async def "):
+                        header_sig = first_non_empty.split("(")[0].strip()
+                        for i, line in enumerate(content_lines):
+                            if header_sig in line:
+                                # Find indentation level of header
+                                indent = len(line) - len(line.lstrip())
+                                # Find end of function block
+                                end_i = i + 1
+                                while end_i < len(content_lines):
+                                    next_l = content_lines[end_i]
+                                    if next_l.strip() and (len(next_l) - len(next_l.lstrip())) <= indent:
+                                        if next_l.strip().startswith("def ") or next_l.strip().startswith("class "):
+                                            break
+                                    end_i += 1
+                                match_idx = i
+                                target_lines_len = end_i - i
+                                break
 
                 if match_idx != -1:
                     # Find base indentation of first line in file matched block
