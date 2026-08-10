@@ -143,9 +143,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+import textwrap
+
 # ── Premium Dark Glassmorphism Design System ──
-st.html(
-    """
+st.markdown(
+    textwrap.dedent("""
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
     /* Foundation — Background & Root */
@@ -153,6 +155,10 @@ st.html(
         background: #05060a !important;
         color: #e2e8f0 !important;
         font-family: 'Inter', -apple-system, sans-serif !important;
+    }
+    header[data-testid="stHeader"], [data-testid="stHeader"] {
+        background: transparent !important;
+        z-index: 100 !important;
     }
     .stApp::before {
         content: '';
@@ -177,7 +183,7 @@ st.html(
         z-index: 0;
     }
     .block-container {
-        padding-top: 1.2rem !important;
+        padding-top: 4.2rem !important;
         padding-left: 2.2rem !important;
         padding-right: 2.2rem !important;
         max-width: 98% !important;
@@ -660,7 +666,8 @@ st.html(
         margin-bottom: 0.5rem !important;
     }
     </style>
-    """
+    """),
+    unsafe_allow_html=True
 )
 
 def get_secret(name: str, default: str | None = None) -> str | None:
@@ -722,12 +729,12 @@ storage, pipeline, repo_service, chat_service, base_llm_provider, token_service 
 
 # ── Sidebar Configurations ──
 
-st.sidebar.html("""
+st.sidebar.markdown(textwrap.dedent("""
 <div style="padding: 8px 0 4px 0; border-bottom: 1px solid rgba(99,102,241,0.15); margin-bottom: 14px;">
   <div style="font-family: 'Outfit', sans-serif; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #4b5563;">System Config</div>
   <div style="font-family: 'Outfit', sans-serif; font-size: 1.0rem; font-weight: 800; color: #c7d2fe; margin-top: 2px;">⚡ Engine Configuration</div>
 </div>
-""")
+"""), unsafe_allow_html=True)
 
 provider = st.sidebar.selectbox(
     "LLM Provider",
@@ -788,8 +795,8 @@ active_llm = get_configured_llm_provider()
 chat_service.llm_provider = active_llm
 
 # ── Sidebar Graph Retrieval & Search Parameters ──
-st.sidebar.html('<hr class="glow-divider">')
-st.sidebar.html('<div class="section-header">🗂 Graph Engine & Retrieval</div>')
+st.sidebar.markdown('<hr class="glow-divider">', unsafe_allow_html=True)
+st.sidebar.markdown('<div class="section-header">🗂 Graph Engine & Retrieval</div>', unsafe_allow_html=True)
 
 # 1. Codebase Retrieval System Selectbox
 current_source = st.session_state.get("harness_source_selection", "combined")
@@ -879,8 +886,8 @@ def ingest_uploaded_files(uploaded_files) -> RepoMetadata:
     return res
 
 # ── Live Sidebar Checklist Placeholder ──
-st.sidebar.html('<hr class="glow-divider">')
-st.sidebar.html('<div class="section-header">📋 Agent Execution Plan</div>')
+st.sidebar.markdown('<hr class="glow-divider">', unsafe_allow_html=True)
+st.sidebar.markdown('<div class="section-header">📋 Agent Execution Plan</div>', unsafe_allow_html=True)
 sidebar_todo_placeholder = st.sidebar.empty()
 
 # Initialize session state variables
@@ -949,8 +956,8 @@ _model_label = st.session_state.get("model_name", "")
 _provider_label = st.session_state.get("llm_provider", "")
 _model_pill = f'<span class="pill amber">⚡ {_provider_label} · {_model_label}</span>' if _model_label else ""
 
-st.html(
-    f"""
+st.markdown(
+    textwrap.dedent(f"""
     <div class="app-header">
       <div class="app-header-logo">
         <svg width="26" height="26" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -970,20 +977,21 @@ st.html(
         {_pills_html}
       </div>
     </div>
-    """
+    """),
+    unsafe_allow_html=True
 )
 
 main_tabs = st.tabs(["📦  Ingest & Index", "🌐  Visualizer", "🤖  QA Harness", "📊  Token Analytics"])
 
 # --- Tab 0: Ingest & Index Graphs ---
 with main_tabs[0]:
-    st.html("""
+    st.markdown(textwrap.dedent("""
     <div style="margin-bottom: 20px;">
       <div style="font-family:'Outfit',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#4b5563; margin-bottom:4px;">Step 1</div>
       <div style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:800; color:#e2e8f0; letter-spacing:-0.01em;">Load your knowledge sources</div>
       <div style="font-family:'Inter',sans-serif; font-size:0.82rem; color:#475569; margin-top:2px;">Upload a codebase or documents — the engine will build graphs, detect communities, and index everything automatically.</div>
     </div>
-    """)
+    """), unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     
     with col1:
@@ -1102,7 +1110,7 @@ with main_tabs[0]:
         # Action Buttons for Knowledge Graph
         all_docs = st.session_state.get("unstructured_docs", [])
         if all_docs:
-            st.html('<div class="section-header">📄 Document Catalog</div>')
+            st.markdown('<div class="section-header">📄 Document Catalog</div>', unsafe_allow_html=True)
             for doc in all_docs:
                 st.write(f"- **{doc['name']}** ({doc['type']}, {doc['size_kb']} KB)")
                 
@@ -1142,14 +1150,14 @@ with main_tabs[0]:
 
 # --- Tab 1: Visualizer Dashboard ---
 with main_tabs[1]:
-    st.html("""
+    st.markdown(textwrap.dedent("""
     <div style="margin-bottom: 20px;">
       <div style="font-family:'Outfit',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#4b5563; margin-bottom:4px;">Interactive</div>
       <div style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:800; color:#e2e8f0; letter-spacing:-0.01em;">Graph Visualizer Dashboard</div>
       <div style="font-family:'Inter',sans-serif; font-size:0.82rem; color:#475569; margin-top:2px;">Explore the structure of your codebase and document knowledge graphs interactively.</div>
     </div>
-    """)
-    st.html('<div class="section-header">📂 Codebase Graph Visualizer</div>')
+    """), unsafe_allow_html=True)
+    st.markdown('<div class="section-header">📂 Codebase Graph Visualizer</div>', unsafe_allow_html=True)
     repo_id = st.session_state.get("repo_id")
     if not repo_id:
         st.warning("Upload a codebase in Tab 1 to visualize the Codebase Graph.")
@@ -1258,13 +1266,13 @@ with main_tabs[1]:
                 st.error(f"Could not render Knowledge Graph: {e}")
 
 with main_tabs[2]:
-    st.html("""
+    st.markdown(textwrap.dedent("""
     <div style="margin-bottom: 20px;">
       <div style="font-family:'Outfit',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#4b5563; margin-bottom:4px;">ReAct Agent Harness</div>
       <div style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:800; color:#e2e8f0; letter-spacing:-0.01em;">Graph-Augmented QA Loop</div>
       <div style="font-family:'Inter',sans-serif; font-size:0.82rem; color:#475569; margin-top:2px;">Ask anything about your codebase or documents. Multi-turn memory preserves context across queries.</div>
     </div>
-    """)
+    """), unsafe_allow_html=True)
     
 
     
@@ -1457,13 +1465,13 @@ with main_tabs[2]:
 
 # --- Tab 3: Token Analytics ---
 with main_tabs[3]:
-    st.html("""
+    st.markdown(textwrap.dedent("""
     <div style="margin-bottom: 20px;">
       <div style="font-family:'Outfit',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#4b5563; margin-bottom:4px;">Diagnostics</div>
       <div style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:800; color:#e2e8f0; letter-spacing:-0.01em;">Token Analytics & Context Savings</div>
       <div style="font-family:'Inter',sans-serif; font-size:0.82rem; color:#475569; margin-top:2px;">Understand how much context each retrieval method uses and how efficiently the engine compresses your codebase.</div>
     </div>
-    """)
+    """), unsafe_allow_html=True)
 
     active_repo = st.session_state.get("repo_id")
     codebase_tokens = _get_active_codebase_tokens(active_repo)
