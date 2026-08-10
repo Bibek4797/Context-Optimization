@@ -1,7 +1,8 @@
 import warnings
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", FutureWarning)
-    import google.generativeai as genai
+# Suppress the google.generativeai FutureWarning about deprecation globally
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
+warnings.filterwarnings("ignore", message=".*google.generativeai.*", category=FutureWarning)
+import google.generativeai as genai
 import streamlit as st
 import time
 import requests

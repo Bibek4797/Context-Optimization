@@ -148,9 +148,7 @@ st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-    /* ══════════════════════════════════════════════════════
-       FOUNDATION — Background & Root
-    ══════════════════════════════════════════════════════ */
+    /* Foundation — Background & Root */
     html, body, .stApp {
         background: #05060a !important;
         color: #e2e8f0 !important;
@@ -187,9 +185,7 @@ st.markdown(
         z-index: 1;
     }
 
-    /* ══════════════════════════════════════════════════════
-       SIDEBAR — Premium Glassmorphism
-    ══════════════════════════════════════════════════════ */
+    /* Sidebar — Premium Glassmorphism */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, rgba(10,11,18,0.98) 0%, rgba(7,8,14,0.98) 100%) !important;
         border-right: 1px solid rgba(99,102,241,0.12) !important;
@@ -218,15 +214,12 @@ st.markdown(
         text-transform: uppercase !important;
         letter-spacing: 0.08em !important;
     }
-    /* Sidebar divider */
     [data-testid="stSidebar"] hr {
         border-color: rgba(99,102,241,0.1) !important;
         margin: 1rem 0 !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       TYPOGRAPHY
-    ══════════════════════════════════════════════════════ */
+    /* Typography */
     h1, h2, h3, h4, h5, h6 {
         font-family: 'Outfit', sans-serif !important;
         letter-spacing: -0.01em !important;
@@ -236,9 +229,7 @@ st.markdown(
     h3 { font-size: 1.1rem !important; font-weight: 600 !important; color: #c7d2fe !important; }
     p, li { color: #94a3b8 !important; line-height: 1.7 !important; }
 
-    /* ══════════════════════════════════════════════════════
-       APP HEADER BANNER
-    ══════════════════════════════════════════════════════ */
+    /* App Header Banner */
     .app-header {
         display: flex;
         align-items: center;
@@ -320,9 +311,7 @@ st.markdown(
         color: #fbbf24;
     }
 
-    /* ══════════════════════════════════════════════════════
-       TABS — Premium Pill Tabs
-    ══════════════════════════════════════════════════════ */
+    /* Tabs — Premium Pill Tabs */
     div[data-baseweb="tab-list"] {
         background: rgba(255,255,255,0.02) !important;
         border-radius: 14px !important;
@@ -358,9 +347,7 @@ st.markdown(
         padding: 0 !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       INPUTS & SELECTBOXES
-    ══════════════════════════════════════════════════════ */
+    /* Inputs & Selectboxes */
     .stTextInput input, .stTextArea textarea {
         background: rgba(255,255,255,0.03) !important;
         border: 1px solid rgba(99,102,241,0.2) !important;
@@ -386,9 +373,7 @@ st.markdown(
         border-color: rgba(99,102,241,0.4) !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       BUTTONS
-    ══════════════════════════════════════════════════════ */
+    /* Buttons */
     .stButton > button {
         background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(13,148,136,0.1)) !important;
         border: 1px solid rgba(99,102,241,0.28) !important;
@@ -412,9 +397,7 @@ st.markdown(
         transform: translateY(0) !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       METRICS — Glassmorphic Cards
-    ══════════════════════════════════════════════════════ */
+    /* Metrics — Glassmorphic Cards */
     [data-testid="stMetric"] {
         background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(99,102,241,0.04)) !important;
         border: 1px solid rgba(255,255,255,0.07) !important;
@@ -452,9 +435,7 @@ st.markdown(
         letter-spacing: -0.02em !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       EXPANDERS
-    ══════════════════════════════════════════════════════ */
+    /* Expanders */
     [data-testid="stExpander"] {
         background: rgba(255,255,255,0.02) !important;
         border: 1px solid rgba(255,255,255,0.07) !important;
@@ -476,9 +457,7 @@ st.markdown(
         color: #c7d2fe !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       CHAT MESSAGES
-    ══════════════════════════════════════════════════════ */
+    /* Chat Messages */
     [data-testid="stChatMessage"] {
         background: rgba(255,255,255,0.02) !important;
         border: 1px solid rgba(255,255,255,0.06) !important;
@@ -514,9 +493,7 @@ st.markdown(
         font-size: 0.9rem !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       CODE BLOCKS
-    ══════════════════════════════════════════════════════ */
+    /* Code Blocks */
     .stCodeBlock, pre, code {
         background: rgba(0,0,0,0.4) !important;
         border: 1px solid rgba(99,102,241,0.12) !important;
@@ -525,9 +502,7 @@ st.markdown(
         font-size: 0.8rem !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       ALERTS / INFO / SUCCESS / ERROR
-    ══════════════════════════════════════════════════════ */
+    /* Alerts / Info / Success / Error */
     [data-testid="stAlert"] {
         border-radius: 10px !important;
         border-width: 1px !important;
@@ -555,9 +530,7 @@ st.markdown(
         color: #fca5a5 !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       FILE UPLOADER
-    ══════════════════════════════════════════════════════ */
+    /* File Uploader */
     [data-testid="stFileUploader"] {
         background: rgba(255,255,255,0.02) !important;
         border: 1.5px dashed rgba(99,102,241,0.25) !important;
@@ -573,9 +546,7 @@ st.markdown(
         background: transparent !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       TOGGLE / SLIDER / RADIO
-    ══════════════════════════════════════════════════════ */
+    /* Toggle / Slider / Radio */
     [data-testid="stToggle"] {
         font-family: 'Inter', sans-serif !important;
         font-size: 0.85rem !important;
@@ -589,24 +560,18 @@ st.markdown(
         font-size: 0.85rem !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       SPINNER
-    ══════════════════════════════════════════════════════ */
+    /* Spinner */
     [data-testid="stSpinner"] > div > div {
         border-color: rgba(99,102,241,0.6) transparent transparent transparent !important;
     }
 
-    /* ══════════════════════════════════════════════════════
-       SCROLLBAR — Subtle Custom
-    ══════════════════════════════════════════════════════ */
+    /* Scrollbar */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
     ::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.3); border-radius: 10px; }
     ::-webkit-scrollbar-thumb:hover { background: rgba(99,102,241,0.5); }
 
-    /* ══════════════════════════════════════════════════════
-       CUSTOM COMPONENT CLASSES
-    ══════════════════════════════════════════════════════ */
+    /* Custom Classes */
     .todo-completed { color: #10B981 !important; font-weight: 600; }
     .todo-inprogress { color: #60EFFF !important; font-style: italic; }
     .todo-pending { color: #475569 !important; }
@@ -655,7 +620,6 @@ st.markdown(
         font-size: 0.82rem;
     }
 
-    /* Separator glow line */
     .glow-divider {
         height: 1px;
         background: linear-gradient(90deg, transparent, rgba(99,102,241,0.4), rgba(13,148,136,0.3), transparent);
@@ -663,7 +627,6 @@ st.markdown(
         border: none;
     }
 
-    /* Download button special style */
     [data-testid="stDownloadButton"] > button {
         background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(13,148,136,0.1)) !important;
         border-color: rgba(16,185,129,0.3) !important;
@@ -675,7 +638,6 @@ st.markdown(
         box-shadow: 0 0 20px rgba(16,185,129,0.15) !important;
     }
 
-    /* Primary action button override */
     .stButton > button[kind="primary"] {
         background: linear-gradient(135deg, #6366f1, #0d9488) !important;
         border: none !important;
@@ -687,7 +649,6 @@ st.markdown(
         transform: translateY(-2px) !important;
     }
 
-    /* Sidebar subheader */
     [data-testid="stSidebar"] .stMarkdown h3 {
         font-family: 'Outfit', sans-serif !important;
         font-size: 0.68rem !important;

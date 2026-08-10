@@ -22,13 +22,20 @@ def extract_text_from_file(uploaded_file) -> str:
         if pypdf is None and PyPDF2 is None:
             st.error("No PDF reading library is available. Please install 'pypdf' or 'PyPDF2' (pip install pypdf).")
             return ""
-        try:
-            reader = pypdf.PdfReader(uploaded_file)
-            for page in reader.pages:
-                t = page.extract_text()
-                if t:
-                    text += t + "\n"
-        except Exception as e:
+        text = ""
+        # Try pypdf first (preferred)
+        if pypdf is not None:
+            try:
+                reader = pypdf.PdfReader(uploaded_file)
+                for page in reader.pages:
+                    t = page.extract_text()
+                    if t:
+                        text += t + "\n"
+            except Exception as e:
+                text = ""  # Will fall through to PyPDF2 if available
+
+        # Fallback to PyPDF2 if pypdf failed or is None
+        if not text and PyPDF2 is not None:
             try:
                 uploaded_file.seek(0)
                 reader = PyPDF2.PdfReader(uploaded_file)
@@ -37,7 +44,8 @@ def extract_text_from_file(uploaded_file) -> str:
                     if t:
                         text += t + "\n"
             except Exception as e2:
-                st.error(f"Failed to read PDF with pypdf and PyPDF2: {e2}")
+                st.error(f"Failed to read PDF with both pypdf and PyPDF2: {e2}")
+
     else:
         try:
             text = uploaded_file.read().decode("utf-8")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import math
+import time
 import subprocess
 import json
 from pathlib import Path
@@ -853,8 +854,17 @@ class GraphRetrievalService:
                     
                     tf_scaled = (tf * (k1 + 1)) / (tf + k1 * (1.0 - b + b * (d_len / avg_doc_len)))
                     score += idf * tf_scaled
-                    
             bm25_scores[nid] = score
+
+
+        # ── Apply Conversational Memory Boost ──
+        # Boost BM25 scores for nodes retrieved in previous turns when anaphoric context is detected
+        if memory_boost_nodes:
+            MEMORY_BOOST = 5.0
+            for nid in memory_boost_nodes:
+                if nid in bm25_scores:
+                    bm25_scores[nid] += MEMORY_BOOST
+
 
         # 3. Personalized PageRank (PPR) using BM25 seed scores as teleportation vector
         pr_map = self._compute_pagerank(all_nodes, all_edges, personalization=bm25_scores)
