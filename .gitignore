@@ -32,3 +32,9 @@ frontend/.env.local
 Thumbs.db
 .vscode/
 .idea/
+
+# Scratch / temporary development files
+scratch/
+*.docx
+*.bak
+*.log

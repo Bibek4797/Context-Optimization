@@ -143,60 +143,152 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom styles injection for high-end dark radial gradient
+# ── Premium Dark Glassmorphism Design System ──
 st.markdown(
     """
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-    .block-container {
-        padding-top: 1.5rem !important;
-        padding-left: 2.5rem !important;
-        padding-right: 2.5rem !important;
-        max-width: 96% !important;
-    }
-    .stApp {
-        background: radial-gradient(circle at 50% 50%, #0d0e15 0%, #050608 100%) !important;
+    /* ══════════════════════════════════════════════════════
+       FOUNDATION — Background & Root
+    ══════════════════════════════════════════════════════ */
+    html, body, .stApp {
+        background: #05060a !important;
         color: #e2e8f0 !important;
         font-family: 'Inter', -apple-system, sans-serif !important;
     }
+    .stApp::before {
+        content: '';
+        position: fixed;
+        top: -40%;
+        left: -20%;
+        width: 80vw;
+        height: 80vh;
+        background: radial-gradient(ellipse at center, rgba(99,102,241,0.07) 0%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+    }
+    .stApp::after {
+        content: '';
+        position: fixed;
+        bottom: -30%;
+        right: -10%;
+        width: 60vw;
+        height: 60vh;
+        background: radial-gradient(ellipse at center, rgba(13,148,136,0.06) 0%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+    }
+    .block-container {
+        padding-top: 1.2rem !important;
+        padding-left: 2.2rem !important;
+        padding-right: 2.2rem !important;
+        max-width: 98% !important;
+        position: relative;
+        z-index: 1;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       SIDEBAR — Premium Glassmorphism
+    ══════════════════════════════════════════════════════ */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgba(10,11,18,0.98) 0%, rgba(7,8,14,0.98) 100%) !important;
+        border-right: 1px solid rgba(99,102,241,0.12) !important;
+        box-shadow: 4px 0 24px rgba(0,0,0,0.4) !important;
+    }
+    [data-testid="stSidebar"] .block-container {
+        padding: 1.5rem 1.2rem !important;
+    }
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] .stMarkdown h1 {
+        font-family: 'Outfit', sans-serif !important;
+        font-size: 1.05rem !important;
+        font-weight: 700 !important;
+        color: #c7d2fe !important;
+        letter-spacing: 0.04em !important;
+        margin-bottom: 0.3rem !important;
+        text-transform: uppercase !important;
+    }
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stSelectbox label,
+    [data-testid="stSidebar"] .stTextInput label {
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.72rem !important;
+        font-weight: 600 !important;
+        color: #64748b !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.08em !important;
+    }
+    /* Sidebar divider */
+    [data-testid="stSidebar"] hr {
+        border-color: rgba(99,102,241,0.1) !important;
+        margin: 1rem 0 !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       TYPOGRAPHY
+    ══════════════════════════════════════════════════════ */
     h1, h2, h3, h4, h5, h6 {
         font-family: 'Outfit', sans-serif !important;
+        letter-spacing: -0.01em !important;
     }
-    /* ── App Header ── */
+    h1 { font-size: 1.9rem !important; font-weight: 800 !important; }
+    h2 { font-size: 1.4rem !important; font-weight: 700 !important; }
+    h3 { font-size: 1.1rem !important; font-weight: 600 !important; color: #c7d2fe !important; }
+    p, li { color: #94a3b8 !important; line-height: 1.7 !important; }
+
+    /* ══════════════════════════════════════════════════════
+       APP HEADER BANNER
+    ══════════════════════════════════════════════════════ */
     .app-header {
         display: flex;
         align-items: center;
-        gap: 14px;
-        padding: 18px 0 14px 0;
-        border-bottom: 1px solid rgba(99, 102, 241, 0.18);
-        margin-bottom: 22px;
+        gap: 16px;
+        padding: 20px 28px;
+        margin-bottom: 24px;
+        background: linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(13,148,136,0.06) 100%);
+        border: 1px solid rgba(99,102,241,0.16);
+        border-radius: 16px;
+        backdrop-filter: blur(12px);
+        position: relative;
+        overflow: hidden;
+    }
+    .app-header::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(99,102,241,0.5), rgba(13,148,136,0.5), transparent);
     }
     .app-header-logo {
-        width: 42px;
-        height: 42px;
+        width: 48px;
+        height: 48px;
         background: linear-gradient(135deg, #6366f1, #0d9488);
-        border-radius: 10px;
+        border-radius: 12px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 22px;
+        font-size: 24px;
         flex-shrink: 0;
+        box-shadow: 0 0 24px rgba(99,102,241,0.35), 0 0 8px rgba(13,148,136,0.2);
     }
     .app-header-text h1 {
         margin: 0 !important;
         padding: 0 !important;
-        font-size: 1.55rem !important;
-        font-weight: 800 !important;
-        background: linear-gradient(135deg, #6366F1 0%, #60EFFF 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        line-height: 1.2 !important;
+        font-size: 1.6rem !important;
+        font-weight: 900 !important;
+        background: linear-gradient(135deg, #818cf8 0%, #60efff 50%, #5eead4 100%) !important;
+        -webkit-background-clip: text !important;
+        -webkit-text-fill-color: transparent !important;
+        background-clip: text !important;
+        line-height: 1.15 !important;
+        letter-spacing: -0.02em !important;
     }
     .app-header-text p {
-        margin: 2px 0 0 0 !important;
-        font-size: 0.78rem !important;
-        color: #718096 !important;
-        letter-spacing: 0.04em;
+        margin: 4px 0 0 0 !important;
+        font-size: 0.8rem !important;
+        color: #475569 !important;
+        letter-spacing: 0.05em;
+        font-family: 'JetBrains Mono', monospace !important;
     }
     .app-status-pill {
         margin-left: auto;
@@ -205,83 +297,406 @@ st.markdown(
         align-items: center;
     }
     .pill {
-        background: rgba(99, 102, 241, 0.1);
-        border: 1px solid rgba(99, 102, 241, 0.25);
+        background: rgba(99,102,241,0.12);
+        border: 1px solid rgba(99,102,241,0.28);
         color: #818cf8;
         border-radius: 20px;
-        padding: 4px 12px;
-        font-size: 0.72rem;
-        font-weight: 600;
+        padding: 5px 14px;
+        font-size: 0.7rem;
+        font-weight: 700;
         font-family: 'Outfit', sans-serif;
         white-space: nowrap;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
     }
     .pill.teal {
-        background: rgba(13, 148, 136, 0.1);
-        border-color: rgba(13, 148, 136, 0.3);
+        background: rgba(13,148,136,0.12);
+        border-color: rgba(13,148,136,0.3);
         color: #5eead4;
     }
-    /* ── Sidebar ── */
-    [data-testid="stSidebar"] {
-        background-color: rgba(13, 14, 21, 0.95) !important;
-        border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+    .pill.amber {
+        background: rgba(245,158,11,0.12);
+        border-color: rgba(245,158,11,0.3);
+        color: #fbbf24;
     }
-    /* ── Tabs ── */
+
+    /* ══════════════════════════════════════════════════════
+       TABS — Premium Pill Tabs
+    ══════════════════════════════════════════════════════ */
     div[data-baseweb="tab-list"] {
-        background-color: rgba(255, 255, 255, 0.02) !important;
-        border-radius: 12px !important;
-        padding: 6px !important;
-        border: 1px solid rgba(255, 255, 255, 0.05) !important;
-        gap: 8px !important;
-        margin-bottom: 20px !important;
+        background: rgba(255,255,255,0.02) !important;
+        border-radius: 14px !important;
+        padding: 5px !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        gap: 4px !important;
+        margin-bottom: 24px !important;
+        backdrop-filter: blur(8px) !important;
     }
     button[data-baseweb="tab"] {
-        background-color: transparent !important;
-        color: #a0aec0 !important;
+        background: transparent !important;
+        color: #64748b !important;
         border: none !important;
-        border-radius: 8px !important;
-        padding: 10px 22px !important;
+        border-radius: 10px !important;
+        padding: 10px 24px !important;
         font-weight: 600 !important;
         font-family: 'Outfit', sans-serif !important;
-        font-size: 0.85rem !important;
-        transition: all 0.2s ease-in-out !important;
+        font-size: 0.84rem !important;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        letter-spacing: 0.02em !important;
     }
     button[data-baseweb="tab"]:hover {
-        background: rgba(99, 102, 241, 0.07) !important;
-        color: #c7d2fe !important;
+        background: rgba(99,102,241,0.08) !important;
+        color: #a5b4fc !important;
     }
     button[data-baseweb="tab"][aria-selected="true"] {
-        background: rgba(99, 102, 241, 0.14) !important;
-        color: #818cf8 !important;
-        border: 1px solid rgba(99, 102, 241, 0.3) !important;
+        background: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(13,148,136,0.15)) !important;
+        color: #c7d2fe !important;
+        border: 1px solid rgba(99,102,241,0.3) !important;
+        box-shadow: 0 0 12px rgba(99,102,241,0.15) !important;
     }
-    /* ── Metrics ── */
+    div[data-baseweb="tab-panel"] {
+        padding: 0 !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       INPUTS & SELECTBOXES
+    ══════════════════════════════════════════════════════ */
+    .stTextInput input, .stTextArea textarea {
+        background: rgba(255,255,255,0.03) !important;
+        border: 1px solid rgba(99,102,241,0.2) !important;
+        border-radius: 10px !important;
+        color: #e2e8f0 !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 0.82rem !important;
+        transition: all 0.2s ease !important;
+    }
+    .stTextInput input:focus, .stTextArea textarea:focus {
+        border-color: rgba(99,102,241,0.5) !important;
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.1) !important;
+        outline: none !important;
+    }
+    .stSelectbox > div > div {
+        background: rgba(255,255,255,0.03) !important;
+        border: 1px solid rgba(99,102,241,0.18) !important;
+        border-radius: 10px !important;
+        color: #e2e8f0 !important;
+        font-family: 'Inter', sans-serif !important;
+    }
+    .stSelectbox > div > div:hover {
+        border-color: rgba(99,102,241,0.4) !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       BUTTONS
+    ══════════════════════════════════════════════════════ */
+    .stButton > button {
+        background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(13,148,136,0.1)) !important;
+        border: 1px solid rgba(99,102,241,0.28) !important;
+        color: #c7d2fe !important;
+        border-radius: 10px !important;
+        font-family: 'Outfit', sans-serif !important;
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        padding: 10px 20px !important;
+        transition: all 0.25s ease !important;
+        letter-spacing: 0.02em !important;
+    }
+    .stButton > button:hover {
+        background: linear-gradient(135deg, rgba(99,102,241,0.28), rgba(13,148,136,0.2)) !important;
+        border-color: rgba(99,102,241,0.5) !important;
+        box-shadow: 0 0 20px rgba(99,102,241,0.2), 0 4px 12px rgba(0,0,0,0.3) !important;
+        transform: translateY(-1px) !important;
+        color: #e0e7ff !important;
+    }
+    .stButton > button:active {
+        transform: translateY(0) !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       METRICS — Glassmorphic Cards
+    ══════════════════════════════════════════════════════ */
     [data-testid="stMetric"] {
-        background: rgba(255,255,255,0.03);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 10px;
-        padding: 14px 16px !important;
+        background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(99,102,241,0.04)) !important;
+        border: 1px solid rgba(255,255,255,0.07) !important;
+        border-radius: 14px !important;
+        padding: 18px 20px !important;
+        transition: all 0.2s ease !important;
+        position: relative;
+        overflow: hidden;
+    }
+    [data-testid="stMetric"]::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 2px;
+        background: linear-gradient(90deg, #6366f1, #0d9488);
+        opacity: 0.6;
+    }
+    [data-testid="stMetric"]:hover {
+        border-color: rgba(99,102,241,0.2) !important;
+        box-shadow: 0 4px 20px rgba(99,102,241,0.1) !important;
     }
     [data-testid="stMetricLabel"] {
-        color: #94a3b8 !important;
-        font-size: 0.75rem !important;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
+        color: #64748b !important;
+        font-size: 0.72rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.08em !important;
+        font-family: 'Inter', sans-serif !important;
     }
     [data-testid="stMetricValue"] {
         font-family: 'Outfit', sans-serif !important;
-        font-weight: 700 !important;
-        font-size: 1.5rem !important;
+        font-weight: 800 !important;
+        font-size: 1.7rem !important;
         color: #e2e8f0 !important;
+        letter-spacing: -0.02em !important;
     }
-    /* ── Misc helpers ── */
+
+    /* ══════════════════════════════════════════════════════
+       EXPANDERS
+    ══════════════════════════════════════════════════════ */
+    [data-testid="stExpander"] {
+        background: rgba(255,255,255,0.02) !important;
+        border: 1px solid rgba(255,255,255,0.07) !important;
+        border-radius: 12px !important;
+        overflow: hidden;
+        margin-bottom: 8px !important;
+    }
+    [data-testid="stExpander"]:hover {
+        border-color: rgba(99,102,241,0.2) !important;
+    }
+    [data-testid="stExpander"] summary {
+        font-family: 'Outfit', sans-serif !important;
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        color: #94a3b8 !important;
+        padding: 14px 18px !important;
+    }
+    [data-testid="stExpander"] summary:hover {
+        color: #c7d2fe !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       CHAT MESSAGES
+    ══════════════════════════════════════════════════════ */
+    [data-testid="stChatMessage"] {
+        background: rgba(255,255,255,0.02) !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        border-radius: 14px !important;
+        padding: 16px !important;
+        margin-bottom: 10px !important;
+        backdrop-filter: blur(4px) !important;
+    }
+    [data-testid="stChatMessage"][data-testid*="user"] {
+        border-color: rgba(99,102,241,0.15) !important;
+        background: rgba(99,102,241,0.05) !important;
+    }
+    [data-testid="stChatMessage"][data-testid*="assistant"] {
+        border-color: rgba(13,148,136,0.15) !important;
+        background: rgba(13,148,136,0.04) !important;
+    }
+    .stChatInputContainer {
+        background: rgba(255,255,255,0.03) !important;
+        border: 1px solid rgba(99,102,241,0.2) !important;
+        border-radius: 14px !important;
+        padding: 4px 4px 4px 16px !important;
+        backdrop-filter: blur(8px) !important;
+    }
+    .stChatInputContainer:focus-within {
+        border-color: rgba(99,102,241,0.45) !important;
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.08), 0 0 24px rgba(99,102,241,0.12) !important;
+    }
+    [data-testid="stChatInput"] {
+        background: transparent !important;
+        border: none !important;
+        color: #e2e8f0 !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.9rem !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       CODE BLOCKS
+    ══════════════════════════════════════════════════════ */
+    .stCodeBlock, pre, code {
+        background: rgba(0,0,0,0.4) !important;
+        border: 1px solid rgba(99,102,241,0.12) !important;
+        border-radius: 10px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 0.8rem !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       ALERTS / INFO / SUCCESS / ERROR
+    ══════════════════════════════════════════════════════ */
+    [data-testid="stAlert"] {
+        border-radius: 10px !important;
+        border-width: 1px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.85rem !important;
+    }
+    div[data-testid="stInfo"] {
+        background: rgba(96,165,250,0.07) !important;
+        border-color: rgba(96,165,250,0.25) !important;
+        color: #93c5fd !important;
+    }
+    div[data-testid="stSuccess"] {
+        background: rgba(16,185,129,0.07) !important;
+        border-color: rgba(16,185,129,0.25) !important;
+        color: #6ee7b7 !important;
+    }
+    div[data-testid="stWarning"] {
+        background: rgba(245,158,11,0.07) !important;
+        border-color: rgba(245,158,11,0.25) !important;
+        color: #fcd34d !important;
+    }
+    div[data-testid="stError"] {
+        background: rgba(239,68,68,0.07) !important;
+        border-color: rgba(239,68,68,0.25) !important;
+        color: #fca5a5 !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       FILE UPLOADER
+    ══════════════════════════════════════════════════════ */
+    [data-testid="stFileUploader"] {
+        background: rgba(255,255,255,0.02) !important;
+        border: 1.5px dashed rgba(99,102,241,0.25) !important;
+        border-radius: 14px !important;
+        padding: 16px !important;
+        transition: all 0.2s ease !important;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: rgba(99,102,241,0.45) !important;
+        background: rgba(99,102,241,0.04) !important;
+    }
+    [data-testid="stFileUploaderDropzone"] {
+        background: transparent !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       TOGGLE / SLIDER / RADIO
+    ══════════════════════════════════════════════════════ */
+    [data-testid="stToggle"] {
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.85rem !important;
+    }
+    .stSlider [data-baseweb="slider"] {
+        color: #6366f1 !important;
+    }
+    .stRadio label {
+        color: #94a3b8 !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.85rem !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       SPINNER
+    ══════════════════════════════════════════════════════ */
+    [data-testid="stSpinner"] > div > div {
+        border-color: rgba(99,102,241,0.6) transparent transparent transparent !important;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       SCROLLBAR — Subtle Custom
+    ══════════════════════════════════════════════════════ */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+    ::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.3); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(99,102,241,0.5); }
+
+    /* ══════════════════════════════════════════════════════
+       CUSTOM COMPONENT CLASSES
+    ══════════════════════════════════════════════════════ */
     .todo-completed { color: #10B981 !important; font-weight: 600; }
     .todo-inprogress { color: #60EFFF !important; font-style: italic; }
-    .todo-pending { color: #a0aec0 !important; }
+    .todo-pending { color: #475569 !important; }
+
+    .stat-card {
+        background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(99,102,241,0.04));
+        border: 1px solid rgba(99,102,241,0.12);
+        border-radius: 14px;
+        padding: 18px 20px;
+        margin-bottom: 10px;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.2s ease;
+    }
+    .stat-card:hover {
+        border-color: rgba(99,102,241,0.25);
+        box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+    }
+    .stat-card::after {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 2px;
+        background: linear-gradient(90deg, #6366f1, #0d9488);
+    }
+
+    .section-header {
+        font-family: 'Outfit', sans-serif;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #4b5563;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
     .dark-teal-highlight {
-        background: rgba(13, 148, 136, 0.1);
-        border-left: 4px solid #0d9488;
-        padding: 10px;
-        color: #5eead4;
+        background: rgba(13, 148, 136, 0.08);
+        border-left: 3px solid #0d9488;
+        border-radius: 0 8px 8px 0;
+        padding: 12px 16px;
+        color: #5eead4 !important;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.82rem;
+    }
+
+    /* Separator glow line */
+    .glow-divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(99,102,241,0.4), rgba(13,148,136,0.3), transparent);
+        margin: 20px 0;
+        border: none;
+    }
+
+    /* Download button special style */
+    [data-testid="stDownloadButton"] > button {
+        background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(13,148,136,0.1)) !important;
+        border-color: rgba(16,185,129,0.3) !important;
+        color: #6ee7b7 !important;
+    }
+    [data-testid="stDownloadButton"] > button:hover {
+        background: linear-gradient(135deg, rgba(16,185,129,0.25), rgba(13,148,136,0.2)) !important;
+        border-color: rgba(16,185,129,0.5) !important;
+        box-shadow: 0 0 20px rgba(16,185,129,0.15) !important;
+    }
+
+    /* Primary action button override */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #6366f1, #0d9488) !important;
+        border: none !important;
+        color: #fff !important;
+        box-shadow: 0 4px 15px rgba(99,102,241,0.35) !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        box-shadow: 0 6px 24px rgba(99,102,241,0.5) !important;
+        transform: translateY(-2px) !important;
+    }
+
+    /* Sidebar subheader */
+    [data-testid="stSidebar"] .stMarkdown h3 {
+        font-family: 'Outfit', sans-serif !important;
+        font-size: 0.68rem !important;
+        font-weight: 700 !important;
+        color: #374151 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.12em !important;
+        margin-top: 1rem !important;
+        margin-bottom: 0.5rem !important;
     }
     </style>
     """,
@@ -292,15 +707,14 @@ def get_secret(name: str, default: str | None = None) -> str | None:
     env_value = os.getenv(name)
     if env_value:
         return env_value
-    local_secrets = PROJECT_ROOT / ".streamlit" / "secrets.toml"
-    home_secrets = Path.home() / ".streamlit" / "secrets.toml"
-    if not local_secrets.exists() and not home_secrets.exists():
-        return default
     try:
-        value = st.secrets.get(name)
-        return str(value) if value else default
+        if hasattr(st, "secrets") and st.secrets is not None:
+            value = st.secrets.get(name)
+            if value is not None:
+                return str(value)
     except Exception:
-        return default
+        pass
+    return default
 
 @st.cache_resource
 def services():
@@ -348,7 +762,12 @@ storage, pipeline, repo_service, chat_service, base_llm_provider, token_service 
 
 # ── Sidebar Configurations ──
 
-st.sidebar.title("⚙️ Engine Configuration")
+st.sidebar.markdown("""
+<div style="padding: 8px 0 4px 0; border-bottom: 1px solid rgba(99,102,241,0.15); margin-bottom: 14px;">
+  <div style="font-family: 'Outfit', sans-serif; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #4b5563;">System Config</div>
+  <div style="font-family: 'Outfit', sans-serif; font-size: 1.0rem; font-weight: 800; color: #c7d2fe; margin-top: 2px;">⚡ Engine Configuration</div>
+</div>
+""", unsafe_allow_html=True)
 
 provider = st.sidebar.selectbox(
     "LLM Provider",
@@ -377,14 +796,15 @@ elif provider == "OpenRouter":
         ]
     )
 
-default_key = ""
+env_secret_name = "GEMINI_API_KEY" if provider == "Gemini" else f"{provider.upper()}_API_KEY"
+default_key = get_secret(env_secret_name) or get_secret("API_KEY", "") or ""
 session_key_name = f"{provider.lower()}_api_key_override"
-if session_key_name not in st.session_state:
-    st.session_state[session_key_name] = default_key
-    
+
+# API Key input field starts completely empty
 api_key = st.sidebar.text_input(
     f"{provider} API Key",
-    value=st.session_state[session_key_name],
+    value=st.session_state.get(session_key_name, ""),
+    placeholder="Paste your API key here...",
     type="password",
     key=f"api_key_input_{provider.lower()}"
 )
@@ -408,32 +828,51 @@ active_llm = get_configured_llm_provider()
 chat_service.llm_provider = active_llm
 
 # ── Sidebar Graph Retrieval & Search Parameters ──
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Graph Engine & Retrieval Parameters")
+st.sidebar.markdown('<hr class="glow-divider">', unsafe_allow_html=True)
+st.sidebar.markdown('<div class="section-header">🗂 Graph Engine & Retrieval</div>', unsafe_allow_html=True)
 
-# 1. Codebase Graph System
-graph_system = st.sidebar.selectbox(
-    "Codebase Graph System",
-    ["CodeGraph (AST-Level Details)", "Graphify (High-Level Architecture)"],
-    index=0 if st.session_state.get("harness_source_selection") != "graphify" else 1,
-    key="sidebar_graph_system_select",
-    help="Select whether query context is extracted from CodeGraph (AST nodes) or Graphify (architecture graph)."
-)
-st.session_state["harness_source_selection"] = "graphify" if "Graphify" in graph_system else "codegraph"
+# 1. Codebase Retrieval System Selectbox
+current_source = st.session_state.get("harness_source_selection", "combined")
+current_retrieval = st.session_state.get("harness_retrieval_method", "advanced")
 
-# 2. Retrieval Engine
-retrieval_engine = st.sidebar.selectbox(
-    "Retrieval Engine",
-    ["Native/Internal CLI Engine", "Advanced Hybrid Scoring (BM25 + PageRank)"],
-    index=0 if st.session_state.get("harness_retrieval_method") != "advanced" else 1,
-    key="sidebar_retrieval_engine_select",
-    help="Native CLI uses command-line query tools. Advanced Hybrid uses PageRank + BM25 search."
+if current_source == "graphify":
+    default_system_idx = 1
+elif current_source == "codegraph" and current_retrieval == "internal":
+    default_system_idx = 2
+else:
+    default_system_idx = 0 # Default: Advanced Hybrid System
+
+retrieval_system_choice = st.sidebar.selectbox(
+    "Codebase Retrieval System",
+    [
+        "Advanced Hybrid System (Combined Dual-Graph)",
+        "Graphify (Native CLI)",
+        "CodeGraph (Native CLI)"
+    ],
+    index=default_system_idx,
+    key="sidebar_retrieval_system_select",
+    help="Advanced Hybrid System automatically scales budget dynamically based on repository size."
 )
-st.session_state["harness_retrieval_method"] = "advanced" if "Advanced" in retrieval_engine else "internal"
+
+if "Graphify" in retrieval_system_choice:
+    st.session_state["harness_source_selection"] = "graphify"
+    st.session_state["harness_retrieval_method"] = "internal"
+    st.session_state["harness_max_nodes"] = 8
+    st.session_state["harness_graphify_mode"] = "bfs"
+elif "CodeGraph" in retrieval_system_choice:
+    st.session_state["harness_source_selection"] = "codegraph"
+    st.session_state["harness_retrieval_method"] = "internal"
+    st.session_state["harness_max_nodes"] = 8
+else: # Advanced Hybrid System (Combined Dual-Graph)
+    st.session_state["harness_source_selection"] = "combined"
+    st.session_state["harness_retrieval_method"] = "advanced"
+    st.session_state["harness_max_nodes"] = None
+    st.session_state["harness_max_anchors"] = None
+    st.session_state["harness_max_neighbors"] = None
 
 st.session_state["source_preference"] = "auto"
 
-# 4. Rectify Mode (Error Correction)
+# 2. Rectify Mode (Error Correction)
 rectify_on = st.sidebar.toggle(
     "🔧 Rectify Mode (Error Correction)",
     value=st.session_state.get("harness_rectify_mode", False),
@@ -443,33 +882,6 @@ rectify_on = st.sidebar.toggle(
 st.session_state["harness_rectify_mode"] = rectify_on
 if rectify_on:
     st.sidebar.info("🔧 **Rectify Mode ON** — Structured code fixes enabled.")
-
-# 5. Sliders: Max Nodes & Max Neighbors / Traversal Strategy
-st.session_state["harness_max_nodes"] = st.sidebar.slider(
-    "Max Nodes (Context Budget)",
-    min_value=2,
-    max_value=30,
-    value=st.session_state.get("harness_max_nodes", 8),
-    key="sidebar_max_nodes_ui"
-)
-
-if st.session_state["harness_source_selection"] == "graphify":
-    graphify_mode_label = st.sidebar.radio(
-        "Graphify Traversal Strategy",
-        ["Broad Architecture (BFS)", "Deep Execution Path (DFS)"],
-        index=0 if st.session_state.get("harness_graphify_mode") != "dfs" else 1,
-        key="sidebar_graphify_mode_ui"
-    )
-    st.session_state["harness_graphify_mode"] = "dfs" if "DFS" in graphify_mode_label else "bfs"
-    st.session_state["harness_max_neighbors"] = 4
-else:
-    st.session_state["harness_max_neighbors"] = st.sidebar.slider(
-        "Max Neighbors (AST Hops)",
-        min_value=1,
-        max_value=15,
-        value=st.session_state.get("harness_max_neighbors", 4),
-        key="sidebar_max_neighbors_ui"
-    )
 
 
 
@@ -507,8 +919,8 @@ def ingest_uploaded_files(uploaded_files) -> RepoMetadata:
     return res
 
 # ── Live Sidebar Checklist Placeholder ──
-st.sidebar.markdown("---")
-st.sidebar.subheader("📋 Agent Execution Plan")
+st.sidebar.markdown('<hr class="glow-divider">', unsafe_allow_html=True)
+st.sidebar.markdown('<div class="section-header">📋 Agent Execution Plan</div>', unsafe_allow_html=True)
 sidebar_todo_placeholder = st.sidebar.empty()
 
 # Initialize session state variables
@@ -572,31 +984,47 @@ if _active_repo_name:
 if _active_pdf_count > 0:
     _pills_html += f'<span class="pill teal">{_active_pdf_count} PDF(s) Indexed</span>'
 
+# Build model pill string
+_model_label = st.session_state.get("model_name", "")
+_provider_label = st.session_state.get("llm_provider", "")
+_model_pill = f'<span class="pill amber">⚡ {_provider_label} · {_model_label}</span>' if _model_label else ""
+
 st.markdown(
     f"""
     <div class="app-header">
       <div class="app-header-logo">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="6" cy="6" r="3" fill="#60EFFF"/>
-          <circle cx="18" cy="6" r="3" fill="#818CF8"/>
-          <circle cx="12" cy="18" r="3" fill="#5EEAD4"/>
-          <path d="M6 6L18 6M6 6L12 18M18 6L12 18" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/>
+        <svg width="26" height="26" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="8" cy="8" r="4" fill="#60EFFF" opacity="0.9"/>
+          <circle cx="24" cy="8" r="4" fill="#818CF8" opacity="0.9"/>
+          <circle cx="16" cy="24" r="4" fill="#5EEAD4" opacity="0.9"/>
+          <circle cx="16" cy="14" r="2.5" fill="white" opacity="0.7"/>
+          <path d="M8 8L24 8M8 8L16 24M24 8L16 24M8 8L16 14M24 8L16 14M16 24L16 14" stroke="rgba(255,255,255,0.35)" stroke-width="1.2"/>
         </svg>
       </div>
       <div class="app-header-text">
         <h1>Context Optimization Engine</h1>
-        <p>Agentic Graph-Augmented Retrieval &amp; Multi-Turn QA Harness</p>
+        <p>▸ Agentic Graph-Augmented Retrieval &amp; Multi-Turn QA Harness</p>
       </div>
-      <div class="app-status-pill">{_pills_html}</div>
+      <div class="app-status-pill">
+        {_model_pill}
+        {_pills_html}
+      </div>
     </div>
     """,
     unsafe_allow_html=True
 )
 
-main_tabs = st.tabs(["Ingest & Index Graphs", "Visualizer Dashboard", "Master Loop QA", "Token Analytics"])
+main_tabs = st.tabs(["📦  Ingest & Index", "🌐  Visualizer", "🤖  QA Harness", "📊  Token Analytics"])
 
 # --- Tab 0: Ingest & Index Graphs ---
 with main_tabs[0]:
+    st.markdown("""
+    <div style="margin-bottom: 20px;">
+      <div style="font-family:'Outfit',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#4b5563; margin-bottom:4px;">Step 1</div>
+      <div style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:800; color:#e2e8f0; letter-spacing:-0.01em;">Load your knowledge sources</div>
+      <div style="font-family:'Inter',sans-serif; font-size:0.82rem; color:#475569; margin-top:2px;">Upload a codebase or documents — the engine will build graphs, detect communities, and index everything automatically.</div>
+    </div>
+    """, unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     
     with col1:
@@ -715,7 +1143,7 @@ with main_tabs[0]:
         # Action Buttons for Knowledge Graph
         all_docs = st.session_state.get("unstructured_docs", [])
         if all_docs:
-            st.markdown("### Document Catalog")
+            st.markdown('<div class="section-header">📄 Document Catalog</div>', unsafe_allow_html=True)
             for doc in all_docs:
                 st.write(f"- **{doc['name']}** ({doc['type']}, {doc['size_kb']} KB)")
                 
@@ -755,10 +1183,14 @@ with main_tabs[0]:
 
 # --- Tab 1: Visualizer Dashboard ---
 with main_tabs[1]:
-    st.subheader("🌐 Visualizer Dashboard")
-    
-    # ── Section 1: Codebase Graph Visualizer (Full Width) ──
-    st.markdown("### 📂 Codebase Graph Visualizer")
+    st.markdown("""
+    <div style="margin-bottom: 20px;">
+      <div style="font-family:'Outfit',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#4b5563; margin-bottom:4px;">Interactive</div>
+      <div style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:800; color:#e2e8f0; letter-spacing:-0.01em;">Graph Visualizer Dashboard</div>
+      <div style="font-family:'Inter',sans-serif; font-size:0.82rem; color:#475569; margin-top:2px;">Explore the structure of your codebase and document knowledge graphs interactively.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown('<div class="section-header">📂 Codebase Graph Visualizer</div>', unsafe_allow_html=True)
     repo_id = st.session_state.get("repo_id")
     if not repo_id:
         st.warning("Upload a codebase in Tab 1 to visualize the Codebase Graph.")
@@ -867,7 +1299,13 @@ with main_tabs[1]:
                 st.error(f"Could not render Knowledge Graph: {e}")
 
 with main_tabs[2]:
-    st.subheader("💬 stateless Master Loop QA")
+    st.markdown("""
+    <div style="margin-bottom: 20px;">
+      <div style="font-family:'Outfit',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#4b5563; margin-bottom:4px;">ReAct Agent Harness</div>
+      <div style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:800; color:#e2e8f0; letter-spacing:-0.01em;">Graph-Augmented QA Loop</div>
+      <div style="font-family:'Inter',sans-serif; font-size:0.82rem; color:#475569; margin-top:2px;">Ask anything about your codebase or documents. Multi-turn memory preserves context across queries.</div>
+    </div>
+    """, unsafe_allow_html=True)
     
 
     
@@ -1029,7 +1467,13 @@ with main_tabs[2]:
                     max_iters = 1
 
                 pref = st.session_state.get("source_preference", "auto").replace(" ", "_").lower()
-                result = harness.execute(user_query, max_iterations=max_iters, source_preference=pref, callback=update_ui)
+                result = harness.execute(
+                    user_query, 
+                    max_iterations=max_iters, 
+                    source_preference=pref, 
+                    callback=update_ui,
+                    chat_history=st.session_state.get("chat_history", [])
+                )
                 final_answer = result["final_answer"]
                 history_log = result["history"]
 
@@ -1054,7 +1498,13 @@ with main_tabs[2]:
 
 # --- Tab 3: Token Analytics ---
 with main_tabs[3]:
-    st.subheader("📊 Multi-Turn Token Analytics & Context Savings")
+    st.markdown("""
+    <div style="margin-bottom: 20px;">
+      <div style="font-family:'Outfit',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#4b5563; margin-bottom:4px;">Diagnostics</div>
+      <div style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:800; color:#e2e8f0; letter-spacing:-0.01em;">Token Analytics & Context Savings</div>
+      <div style="font-family:'Inter',sans-serif; font-size:0.82rem; color:#475569; margin-top:2px;">Understand how much context each retrieval method uses and how efficiently the engine compresses your codebase.</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     active_repo = st.session_state.get("repo_id")
     codebase_tokens = _get_active_codebase_tokens(active_repo)

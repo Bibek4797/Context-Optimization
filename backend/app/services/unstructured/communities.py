@@ -6,47 +6,40 @@ def detect_communities(G: nx.Graph, resolution: float = 1.0) -> dict:
         return {}
     
     G_undirected = G.to_undirected()
-    community_map = {}
     
-    try:
-        from networkx.algorithms import community as nx_comm
-        res = resolution
-        comm_sets = nx_comm.louvain_communities(G_undirected, resolution=res, seed=42)
-        
-        # If Louvain groups nodes into too few communities, dynamically scale resolution to force partitioning
-        while len(comm_sets) < 3 and res < 15.0 and len(G_undirected.nodes) >= 10:
-            res += 1.0
-            comm_sets = nx_comm.louvain_communities(G_undirected, resolution=res, seed=42)
-            
-        for cid, node_set in enumerate(comm_sets):
-            for node in node_set:
-                community_map[node] = cid
-    except Exception:
+    # ── Hierarchical Multi-Level Louvain Community Trees ──
+    # Level 0 (Global Themes): gamma = 0.5
+    # Level 1 (Mid Topics):    gamma = 1.0 (Default)
+    # Level 2 (Micro Facts):   gamma = 2.5
+    
+    def _run_louvain(res_val: float) -> dict:
+        comm_map = {}
         try:
             from networkx.algorithms import community as nx_comm
-            comm_sets = list(nx_comm.greedy_modularity_communities(G_undirected))
+            comm_sets = nx_comm.louvain_communities(G_undirected, resolution=res_val, seed=42)
             for cid, node_set in enumerate(comm_sets):
                 for node in node_set:
-                    community_map[node] = cid
+                    comm_map[node] = cid
         except Exception:
-            try:
-                comp_sets = list(nx.connected_components(G_undirected))
-                for cid, node_set in enumerate(comp_sets):
-                    for node in node_set:
-                        community_map[node] = cid
-            except Exception:
-                for node in G.nodes:
-                    community_map[node] = 0
-                    
-    for node in G.nodes:
-        G.nodes[node]["community_id"] = community_map.get(node, 0)
-        
-    return community_map
+            for node in G.nodes:
+                comm_map[node] = 0
+        return comm_map
 
-def group_nodes_by_community(G: nx.Graph) -> dict[int, list]:
+    level_0_map = _run_louvain(0.5)
+    level_1_map = _run_louvain(resolution)
+    level_2_map = _run_louvain(2.5)
+
+    for node in G.nodes:
+        G.nodes[node]["community_level_0"] = level_0_map.get(node, 0)
+        G.nodes[node]["community_id"] = level_1_map.get(node, 0) # Level 1 (Default)
+        G.nodes[node]["community_level_2"] = level_2_map.get(node, 0)
+        
+    return level_1_map
+
+def group_nodes_by_community(G: nx.Graph, level_key: str = "community_id") -> dict[int, list]:
     communities = {}
     for node, data in G.nodes(data=True):
-        cid = data.get("community_id", 0)
+        cid = data.get(level_key, 0)
         if cid not in communities:
             communities[cid] = []
         communities[cid].append(node)
@@ -104,7 +97,8 @@ def summarize_all_communities(G: nx.Graph) -> tuple[dict[int, str], dict[int, li
     if not has_communities:
         detect_communities(G)
         
-    communities = group_nodes_by_community(G)
+    # Summarize Level 1 communities (Mid Topics)
+    communities = group_nodes_by_community(G, level_key="community_id")
     
     summaries = {}
     embeddings = {}
@@ -112,8 +106,6 @@ def summarize_all_communities(G: nx.Graph) -> tuple[dict[int, str], dict[int, li
     for cid, node_ids in communities.items():
         summary = summarize_community(G, cid, node_ids)
         summaries[cid] = summary
-        
-        # Skip API-based embedding generation to conserve quota; matching is done locally via TF-IDF & SVD (LSA)
         embeddings[cid] = []
             
     return summaries, embeddings

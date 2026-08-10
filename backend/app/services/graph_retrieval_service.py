@@ -127,13 +127,58 @@ class GraphRetrievalService:
                 f"Download URL: {url}. Error detail: {exc}."
             )
 
-    def _compute_pagerank(self, nodes: list[GraphNode], edges: list[GraphEdge], damping: float = 0.85, max_iter: int = 20) -> dict[str, float]:
+    def _stem_word(self, word: str) -> str:
+        """Lightweight suffix stemmer for BM25 normalization (e.g. division -> divid, divide -> divid)."""
+        w = word.lower()
+        if len(w) <= 3:
+            return w
+        if w.startswith("divis") or w.startswith("divid"):
+            return "divid"
+        if w.endswith("ision") or w.endswith("ition"):
+            return w[:-5] + "id"
+        if w.endswith("ation") or w.endswith("ating") or w.endswith("ated"):
+            return w[:-5]
+        if w.endswith("ing") and len(w) > 4:
+            w = w[:-3]
+            if w.endswith("e"):
+                w = w[:-1]
+            return w
+        if w.endswith("es") and len(w) > 4:
+            return w[:-2]
+        if w.endswith("ed") and len(w) > 4:
+            return w[:-2]
+        if w.endswith("ive") and len(w) > 4:
+            return w[:-3] + "id"
+        if w.endswith("s") and not w.endswith("ss") and len(w) > 3:
+            return w[:-1]
+        if w.endswith("e") and len(w) > 4:
+            return w[:-1]
+        return w
+
+    def _compute_pagerank(
+        self, 
+        nodes: list[GraphNode], 
+        edges: list[GraphEdge], 
+        damping: float = 0.85, 
+        max_iter: int = 20,
+        personalization: dict[str, float] | None = None
+    ) -> dict[str, float]:
         n = len(nodes)
         if n == 0:
             return {}
         
-        # Initialize PageRank equally
-        pr = {node.node_id: 1.0 / n for node in nodes}
+        # Base teleportation vector (default: uniform 1.0 / n)
+        teleport: dict[str, float] = {}
+        if personalization:
+            total_p = sum(personalization.values())
+            if total_p > 0:
+                teleport = {node.node_id: personalization.get(node.node_id, 0.0) / total_p for node in nodes}
+        
+        if not teleport:
+            teleport = {node.node_id: 1.0 / n for node in nodes}
+        
+        # Initialize PageRank with teleportation vector
+        pr = dict(teleport)
         
         # Build adjacency and incoming mappings
         out_degree: dict[str, int] = {}
@@ -148,13 +193,12 @@ class GraphRetrievalService:
         # Power iteration
         for _ in range(max_iter):
             new_pr = {}
-            # Redistribute sink rank (0 out-degree) equally
             sink_sum = sum(pr[node_id] for node_id, deg in out_degree.items() if deg == 0)
             
             for node in nodes:
                 nid = node.node_id
-                rank = (1.0 - damping) / n
-                rank += damping * (sink_sum / n)
+                rank = (1.0 - damping) * teleport[nid]
+                rank += damping * sink_sum * teleport[nid]
                 
                 for src in incoming[nid]:
                     rank += damping * (pr[src] / out_degree[src])
@@ -297,32 +341,66 @@ class GraphRetrievalService:
     ) -> GraphRetrievalResult:
         """Route to the native query engine of CodeGraph / Graphify based on source_selection.
 
-        Only uses the external CLI tools (graphify CLI or CodeGraph Node.js).
-        If the CLI fails, the exception is raised directly to the user so they can inspect why it failed.
+        Tries the external CLI tools (graphify CLI or CodeGraph Node.js) first.
+        If the CLI is unavailable (e.g. Streamlit Cloud), automatically falls back to
+        the Advanced Hybrid Scoring system so the app always works globally.
         """
+        cli_error: str | None = None
+
         if source_selection == "graphify":
             if not graphify or not graphify.nodes:
                 raise ValueError("Graphify output is not available for this repository.")
-            selected_nodes, selected_edges, _ = self._query_graphify(repo_id, graphify, query, max_nodes, graphify_mode=graphify_mode)
-            gf_budget = max_nodes * 250
-            mode_label = graphify_mode.upper()
-            strategy = f"Internal Graph Retrieval (Graphify CLI | {mode_label} | Budget: {gf_budget})"
-        else:  # "codegraph"
-            selected_nodes, selected_edges, _ = self._query_codegraph(repo_id, codegraph, query, max_nodes)
-            strategy = "Internal Graph Retrieval (CodeGraph CLI)"
+            try:
+                selected_nodes, selected_edges, _ = self._query_graphify(repo_id, graphify, query, max_nodes, graphify_mode=graphify_mode)
+                gf_budget = max_nodes * 250
+                mode_label = graphify_mode.upper()
+                strategy = f"Internal Graph Retrieval (Graphify CLI | {mode_label} | Budget: {gf_budget})"
+                snippets = self._snippets(repo_id, selected_nodes)
+                context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="internal")
+                measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
+                return GraphRetrievalResult(
+                    context=context, snippets=snippets,
+                    selected_nodes=selected_nodes, selected_edges=selected_edges,
+                    token_measurement=measurement, retrieval_strategy=strategy,
+                )
+            except Exception as e:
+                cli_error = f"Graphify CLI unavailable ({e}). Falling back to Advanced Hybrid System."
 
-        snippets = self._snippets(repo_id, selected_nodes)
-        context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="internal")
-        measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
+        elif source_selection == "codegraph":
+            try:
+                selected_nodes, selected_edges, _ = self._query_codegraph(repo_id, codegraph, query, max_nodes)
+                strategy = "Internal Graph Retrieval (CodeGraph CLI)"
+                snippets = self._snippets(repo_id, selected_nodes)
+                context = self._format_context(selected_nodes, selected_edges, snippets, retrieval_method="internal")
+                measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
+                return GraphRetrievalResult(
+                    context=context, snippets=snippets,
+                    selected_nodes=selected_nodes, selected_edges=selected_edges,
+                    token_measurement=measurement, retrieval_strategy=strategy,
+                )
+            except Exception as e:
+                cli_error = f"CodeGraph CLI unavailable ({e}). Falling back to Advanced Hybrid System."
 
-        return GraphRetrievalResult(
-            context=context,
-            snippets=snippets,
-            selected_nodes=selected_nodes,
-            selected_edges=selected_edges,
-            token_measurement=measurement,
-            retrieval_strategy=strategy,
+        # ── CLI Fallback: Advanced Hybrid System ──
+        # Triggered automatically when CLI tool is unavailable (e.g. Streamlit Cloud)
+        import streamlit as st
+        if cli_error:
+            try:
+                st.toast(f"⚠️ {cli_error}", icon="⚠️")
+            except Exception:
+                print(f"[Harness Warning] {cli_error}")
+
+        fallback_result = self._advanced_hybrid_retrieval(
+            repo_id=repo_id, query=query, max_nodes=max_nodes,
+            source_selection=source_selection, codegraph=codegraph, graphify=graphify,
+            max_anchors=None, max_neighbors=None
         )
+        # Tag the strategy to make the fallback visible to the user
+        fallback_result.retrieval_strategy = (
+            f"Advanced Hybrid System (CLI auto-fallback: {source_selection})"
+            if cli_error else fallback_result.retrieval_strategy
+        )
+        return fallback_result
 
     def _query_graphify(self, repo_id: str, graphify, query: str, max_nodes: int, graphify_mode: str = "bfs") -> tuple[list[GraphNode], list[GraphEdge], bool]:
         """Try external Graphify CLI. Raise an error if it is missing or fails."""
@@ -656,52 +734,57 @@ class GraphRetrievalService:
         source_selection: str, codegraph, graphify,
         max_anchors: int | None = None, max_neighbors: int | None = None,
     ) -> GraphRetrievalResult:
-        # Source Selection and Dynamic Graph Loading
-        if source_selection == "graphify" and graphify:
+        # 0. Coarse-to-Fine Dual Graph Option ("combined")
+        if source_selection == "combined" and graphify and codegraph:
+            # Stage 1: Macro Routing using Graphify to find top target files
+            macro_nodes = graphify.nodes
+            macro_codes = {n.node_id: self._read_node_code(repo_id, n, {}, max_chars=2000) for n in macro_nodes}
+            q_terms_raw = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query) if len(t) > 1]
+            q_stems = set(self._stem_word(t) for t in q_terms_raw)
+            
+            macro_scores = {}
+            for n in macro_nodes:
+                code_stems = set(self._stem_word(w) for w in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", macro_codes[n.node_id]))
+                match_count = len(q_stems.intersection(code_stems))
+                macro_scores[n.node_id] = match_count
+                
+            top_macro_files = set()
+            sorted_macros = sorted(macro_nodes, key=lambda n: macro_scores.get(n.node_id, 0), reverse=True)
+            for mnode in sorted_macros[:3]: # Pick top 3 macro files
+                if mnode.file_path:
+                    top_macro_files.add(mnode.file_path)
+                    
+            # Stage 2: Filter CodeGraph micro nodes to ONLY those inside top macro files
+            filtered_codegraph_nodes = [n for n in codegraph.nodes if n.file_path in top_macro_files]
+            if filtered_codegraph_nodes:
+                filtered_node_ids = set(n.node_id for n in filtered_codegraph_nodes)
+                filtered_codegraph_edges = [e for e in codegraph.edges if e.source_node in filtered_node_ids or e.target_node in filtered_node_ids]
+                all_nodes = filtered_codegraph_nodes
+                all_edges = filtered_codegraph_edges
+            else:
+                all_nodes = codegraph.nodes
+                all_edges = codegraph.edges
+        elif source_selection == "graphify" and graphify:
             all_nodes = graphify.nodes
             all_edges = graphify.edges
         else: # "codegraph"
             all_nodes = codegraph.nodes
             all_edges = codegraph.edges
 
-        # 1. Base limits mapping
-        if max_nodes <= 8:
-            base_anchors, base_neighbors = 2, 4
-        elif max_nodes <= 14:
-            base_anchors, base_neighbors = 4, 8
-        else:
-            base_anchors, base_neighbors = 8, 16
-
-        # Dynamically scale actual limits based on total nodes (N) in the active repository graph
+        # Research-Backed Dynamic Budget Scaling Matrix based on Graph Size N
         N = len(all_nodes)
-        if N <= 100:
-            scale_factor = 0.5
-        elif N <= 1000:
-            scale_factor = 1.0
-        elif N <= 5000:
-            scale_factor = 2.0
-        else:
-            scale_factor = 3.0
+        if N <= 100:       # Small Tier (<10 files)
+            auto_anchors, auto_neighbors, auto_hops = 2, 4, 1
+        elif N <= 1000:    # Medium Tier (10-50 files)
+            auto_anchors, auto_neighbors, auto_hops = 4, 8, 2
+        elif N <= 5000:    # Large Tier (50-250 files)
+            auto_anchors, auto_neighbors, auto_hops = 6, 12, 2
+        else:              # Monorepo Tier (>250 files)
+            auto_anchors, auto_neighbors, auto_hops = 8, 16, 3
 
-        if max_anchors is not None:
-            actual_max_anchors = max_anchors
-        else:
-            actual_max_anchors = max(2, int(base_anchors * scale_factor))
-
-        if max_neighbors is not None:
-            actual_max_neighbors = max_neighbors
-        else:
-            actual_max_neighbors = max(4, int(base_neighbors * scale_factor))
-
-        # 2. Run global PageRank centrality scoring (independent of query)
-        pr_map = self._compute_pagerank(all_nodes, all_edges)
-        sorted_by_pr = sorted(all_nodes, key=lambda n: pr_map.get(n.node_id, 0.0), reverse=True)
-        pr_ranks = {node.node_id: idx + 1 for idx, node in enumerate(sorted_by_pr)}
-        
-        pr_scores = {}
-        for node in all_nodes:
-            rank = pr_ranks[node.node_id]
-            pr_scores[node.node_id] = 10.0 * (1.0 - (rank - 1) / N) if N > 1 else 10.0
+        actual_max_anchors = max_anchors if max_anchors is not None else auto_anchors
+        actual_max_neighbors = max_neighbors if max_neighbors is not None else auto_neighbors
+        actual_max_hops = auto_hops
 
         # Read every node's code snippet to build BM25 corpus (truncate to 2000 chars to save memory/CPU)
         file_cache: dict[str, list[str]] = {}
@@ -709,12 +792,24 @@ class GraphRetrievalService:
         for node in all_nodes:
             node_codes[node.node_id] = self._read_node_code(repo_id, node, file_cache, max_chars=2000)
 
-        # 3. BM25 scoring (query-dependent)
-        query_terms = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query) if len(t) > 1]
+        # 2. BM25 scoring with Porter Stemming (query-dependent)
+        raw_query_terms = [t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query) if len(t) > 1]
+        stemmed_query_terms = [self._stem_word(t) for t in raw_query_terms]
         
-        # Calculate document frequencies for terms and fast document lengths
-        doc_freqs = {term: 0 for term in query_terms}
-        corpus_tokens = {}
+        # ── Conversational Memory Subgraph Boost ──
+        # Check if query contains anaphoric pronouns ('it', 'this', 'that', 'same', 'fix')
+        import streamlit as st
+        anaphora_terms = {"it", "this", "that", "same", "fix", "refactor", "correct", "above", "previous"}
+        has_anaphora = bool(set(raw_query_terms).intersection(anaphora_terms))
+        memory_boost_nodes = set()
+        if has_anaphora and "graph_memory_nodes" in st.session_state:
+            recent_memory = st.session_state["graph_memory_nodes"][-1:] # Get top nodes from prior turn
+            for mem in recent_memory:
+                memory_boost_nodes.update(mem.get("top_node_ids", []))
+        
+        # Calculate document frequencies for stemmed terms and fast document lengths
+        doc_freqs = {term: 0 for term in stemmed_query_terms}
+        corpus_stem_tokens = {}
         doc_lens = {}
         total_len = 0
         
@@ -725,15 +820,14 @@ class GraphRetrievalService:
                 doc_lens[nid] = 0
                 continue
             
-            # Fast document length estimation
             d_len = len(code.split())
             doc_lens[nid] = d_len
             total_len += d_len
             
-            # Normalize tokens
-            tokens = set(t.lower() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", code))
-            corpus_tokens[nid] = tokens
-            for term in query_terms:
+            # Normalize and stem tokens
+            tokens = set(self._stem_word(t.lower()) for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", code))
+            corpus_stem_tokens[nid] = tokens
+            for term in stemmed_query_terms:
                 if term in tokens:
                     doc_freqs[term] += 1
                     
@@ -743,29 +837,34 @@ class GraphRetrievalService:
         k1 = 1.2
         b = 0.75
         bm25_scores = {}
-        
         import math
         for node in all_nodes:
             nid = node.node_id
             score = 0.0
-            tokens = corpus_tokens.get(nid, set())
+            tokens = corpus_stem_tokens.get(nid, set())
             d_len = doc_lens.get(nid, 0)
             
-            for term in query_terms:
+            for term in stemmed_query_terms:
                 if term in tokens:
-                    # BM25 IDF
                     df = doc_freqs[term]
                     idf = math.log((N - df + 0.5) / (df + 0.5) + 1.0)
+                    code_stems = [self._stem_word(t.lower()) for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", node_codes[nid])]
+                    tf = code_stems.count(term)
                     
-                    # Term frequency inside document
-                    code = node_codes[nid]
-                    tf = code.lower().count(term)
-                    
-                    # Score contribution
                     tf_scaled = (tf * (k1 + 1)) / (tf + k1 * (1.0 - b + b * (d_len / avg_doc_len)))
                     score += idf * tf_scaled
                     
             bm25_scores[nid] = score
+
+        # 3. Personalized PageRank (PPR) using BM25 seed scores as teleportation vector
+        pr_map = self._compute_pagerank(all_nodes, all_edges, personalization=bm25_scores)
+        sorted_by_pr = sorted(all_nodes, key=lambda n: pr_map.get(n.node_id, 0.0), reverse=True)
+        pr_ranks = {node.node_id: idx + 1 for idx, node in enumerate(sorted_by_pr)}
+        
+        pr_scores = {}
+        for node in all_nodes:
+            rank = pr_ranks[node.node_id]
+            pr_scores[node.node_id] = 10.0 * (1.0 - (rank - 1) / N) if N > 1 else 10.0
 
         # 4. Synthesize final scores (Linear Combination)
         w_bm25 = 0.65
@@ -773,7 +872,6 @@ class GraphRetrievalService:
         node_scores = {}
         for node in all_nodes:
             nid = node.node_id
-            # Normalize BM25 score
             raw_bm25 = bm25_scores.get(nid, 0.0)
             node_scores[nid] = (w_bm25 * raw_bm25) + (w_pr * pr_scores.get(nid, 0.0))
 
@@ -782,8 +880,8 @@ class GraphRetrievalService:
         selected_anchors = {}
         
         # Ensure at least 1 top anchor per distinct query term is selected for cross-component queries
-        if len(query_terms) > 1:
-            for term in query_terms:
+        if len(raw_query_terms) > 1:
+            for term in raw_query_terms:
                 term_matches = [
                     node for node in anchors_list 
                     if term in node.label.lower() or term in (node.file_path or "").lower()
@@ -900,6 +998,19 @@ class GraphRetrievalService:
         )
         measurement = self.token_service.measure_estimated("codegraph_graphify_optimized_context", context)
         
+        # Save Conversational Memory Subgraph node IDs into session state for next turn
+        try:
+            import streamlit as st
+            if "graph_memory_nodes" not in st.session_state:
+                st.session_state["graph_memory_nodes"] = []
+            st.session_state["graph_memory_nodes"].append({
+                "query": query,
+                "top_node_ids": [n.node_id for n in selected_nodes[:8]],
+                "timestamp": time.time()
+            })
+        except Exception:
+            pass
+
         return GraphRetrievalResult(
             context=context,
             snippets=snippets,

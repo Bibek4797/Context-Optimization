@@ -278,7 +278,8 @@ class AgentHarness:
         user_query: str,
         max_iterations: int = 6,
         source_preference: str = "auto",
-        callback: Any = None
+        callback: Any = None,
+        chat_history: list[dict] | None = None,
     ) -> dict[str, Any]:
         """
         Perception-Action-Observation loop.
@@ -292,6 +293,19 @@ class AgentHarness:
         has_code = self._has_codebase()
         has_pdf  = self._has_pdf()
 
+        # Build Multi-Turn Chat History context string if provided
+        chat_history_str = ""
+        if chat_history:
+            turns = []
+            for msg in chat_history[-6:]:  # Keep 6 recent turns
+                role = msg.get("role", "user").capitalize()
+                content = str(msg.get("content", ""))
+                # Strip out long XML code blocks for concise history
+                content_clean = re.sub(r"<code_fix>.*?</code_fix>", "[Code Fix Applied]", content, flags=re.DOTALL)
+                turns.append(f"{role}: {content_clean[:400]}")
+            if turns:
+                chat_history_str = "### Previous Conversation Context:\n" + "\n".join(turns) + "\n\n"
+
         # ── Scenario classification ──────────────────
         if has_code and has_pdf:
             scenario = "both"
@@ -303,7 +317,6 @@ class AgentHarness:
             scenario = "none"
 
         # ── Initialise harness checklist ─────────────
-        # Always use "step" key (fixes the KeyError bug)
         if scenario == "both":
             initial_steps = [
                 f"Understand query: '{user_query[:50]}'",
@@ -332,7 +345,6 @@ class AgentHarness:
         st.session_state["harness_todo"] = [
             {"step": s, "status": "pending"} for s in initial_steps
         ]
-        # Mark first step in progress
         st.session_state["harness_todo"][0]["status"] = "in_progress"
 
         if callback:
@@ -342,8 +354,9 @@ class AgentHarness:
         if scenario == "none":
             try:
                 direct_prompt = (
-                    f"Answer the following question using your own knowledge. "
-                    f"No external graphs are available.\n\nQuestion: {user_query}"
+                    f"Answer the following question using your own knowledge.\n"
+                    f"{chat_history_str}"
+                    f"Question: {user_query}"
                 )
                 resp = self.llm_provider.generate_answer(direct_prompt)
                 final_answer = resp.text.strip()
@@ -428,10 +441,22 @@ class AgentHarness:
                 for i, s in enumerate(history)
             )
 
+            # Safeguard: if a retrieval tool has already returned valid context, instruct LLM to produce final_answer immediately
+            has_retrieval_obs = any(
+                step.get("tool") in ("query_codegraph", "query_langgraph") 
+                and "Error:" not in step.get("observation", "")
+                for step in history
+            )
+            force_answer_note = ""
+            if has_retrieval_obs:
+                force_answer_note = "\n\nCRITICAL: Graph retrieval results are already available in your Execution History above. Do NOT call retrieval tools again. Produce your JSON response with 'final_answer' NOW."
+
             prompt = (
                 f"{system_prompt}\n\n"
+                f"{chat_history_str}"
                 f"User Question: {user_query}\n\n"
-                f"### Execution History:\n{history_text}\n\n"
+                f"### Execution History:\n{history_text}"
+                f"{force_answer_note}\n\n"
                 f"### Next Step:\nOutput only a valid JSON object."
             )
 

@@ -1,4 +1,7 @@
-import google.generativeai as genai
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", FutureWarning)
+    import google.generativeai as genai
 import streamlit as st
 import time
 import requests
@@ -35,9 +38,11 @@ def generate_text(prompt: str, json_mode: bool = False, retries: int = 5, backof
     _last_call_time = time.time()
         
     provider = st.session_state.get("llm_provider", "Gemini")
+    # Normalize: provider may be stored as "Groq (model)" or "OpenRouter (model)" – extract base name
+    provider_base = provider.split(" (")[0].strip()
     api_key = st.session_state.get("api_key", "")
     
-    if provider == "Gemini":
+    if provider_base == "Gemini":
         for attempt in range(retries):
             try:
                 genai.configure(api_key=api_key)
@@ -62,7 +67,7 @@ def generate_text(prompt: str, json_mode: bool = False, retries: int = 5, backof
                 print(f"[LLM Error] Gemini generation failed: {e}")
                 raise e
                 
-    elif provider.startswith("Groq"):
+    elif provider_base == "Groq":
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -96,7 +101,7 @@ def generate_text(prompt: str, json_mode: bool = False, retries: int = 5, backof
                 print(f"[LLM Exception] Groq request failed: {e}")
                 raise e
                 
-    elif provider.startswith("OpenRouter"):
+    elif provider_base == "OpenRouter":
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -129,7 +134,7 @@ def generate_text(prompt: str, json_mode: bool = False, retries: int = 5, backof
             except Exception as e:
                 print(f"[LLM Exception] OpenRouter request failed: {e}")
                 raise e
-    elif provider == "Amazon Bedrock":
+    elif provider_base == "Amazon Bedrock":
         access_key = st.session_state.get("aws_access_key", "").strip()
         secret_key = st.session_state.get("aws_secret_key", "").strip()
         region = st.session_state.get("aws_region", "").strip()
@@ -170,7 +175,8 @@ def embed_texts(texts: list[str], retries: int = 5, backoff: float = 3.0) -> lis
     # Embeddings are only supported on Gemini. If using Groq/OpenRouter,
     # return empty lists to naturally trigger our local NLP fallbacks in retrieval.py.
     provider = st.session_state.get("llm_provider", "Gemini")
-    if provider != "Gemini":
+    provider_base = provider.split(" (")[0].strip()
+    if provider_base != "Gemini":
         return [[] for _ in texts]
         
     api_key = st.session_state.get("api_key", "")

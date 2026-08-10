@@ -48,6 +48,51 @@ def extract_text_from_file(uploaded_file) -> str:
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+def resolve_coreferences(text: str) -> str:
+    """Coreference Resolution Pre-Pass: Resolves ambiguous pronouns to explicit entity names."""
+    if not text or len(text.strip()) == 0:
+        return text
+        
+    # Attempt FastCoref neural resolution if available
+    try:
+        from fastcoref import FCoref
+        model = FCoref(device="cpu")
+        preds = model.predict(texts=[text[:10000]]) # Process first 10k chars for speed
+        resolved = preds[0].get_resolved_text()
+        if resolved and len(resolved) > 0:
+            return resolved
+    except Exception:
+        pass
+
+    # Lightweight Pattern-Based Coreference Fallback:
+    # Resolves sentence-initial pronouns ('He also', 'She also', 'It is', 'They also')
+    # by matching preceding capital entity nouns in adjacent sentences.
+    try:
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        if len(sentences) <= 1:
+            return text
+            
+        resolved_sentences = []
+        last_entity = ""
+        
+        for sent in sentences:
+            # Detect primary noun entity in sentence (e.g. "Andrew Ng", "DeepLearning.AI")
+            cap_matches = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', sent)
+            if cap_matches:
+                last_entity = cap_matches[0]
+                
+            # Replace ambiguous pronouns at start of sentence if previous entity exists
+            if last_entity:
+                sent = re.sub(r'^(He|She|It|They)\s+also\b', f'{last_entity} also', sent)
+                sent = re.sub(r'^(He|She|It|They)\s+was\b', f'{last_entity} was', sent)
+                sent = re.sub(r'^(He|She|It|They)\s+is\b', f'{last_entity} is', sent)
+                
+            resolved_sentences.append(sent)
+            
+        return " ".join(resolved_sentences)
+    except Exception:
+        return text
+
 def summarize_document(text: str) -> str:
     if not text.strip():
         return "Empty text."
@@ -78,6 +123,8 @@ def process_uploaded_files(uploaded_files) -> list[dict]:
         text = extract_text_from_file(file)
         if not text:
             continue
+        # Apply Coreference Resolution Pre-Pass to resolve pronouns
+        text = resolve_coreferences(text)
         summary = ""
         if llm_client.is_configured():
             summary = summarize_document(text)
